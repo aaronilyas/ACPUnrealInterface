@@ -20,3 +20,15 @@
 .status {
     -fx-text-fill: #4a5160;
 }
+
+.status-ok {
+    -fx-text-fill: #1d6b3a;
+}
+
+.status-warn {
+    -fx-text-fill: #8a5a00;
+}
+
+.status-bad {
+    -fx-text-fill: #8f2d2d;
+}
