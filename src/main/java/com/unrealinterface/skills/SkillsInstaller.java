@@ -33,6 +33,7 @@ public final class SkillsInstaller {
             "unreal-blueprints/SKILL.md",
             "unreal-cpp-gameplay/SKILL.md",
             "unreal-scene-building/SKILL.md",
+            "unreal-enhanced-input/SKILL.md",
             "unreal-iteration/SKILL.md");
 
     /** Bundle paths. Copied to the project root under the file name only. */

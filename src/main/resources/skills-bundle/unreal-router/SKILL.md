@@ -1,11 +1,11 @@
 ---
 name: unreal-router
-description: "Use when the workspace has a .uproject, or the user asks for Unreal Engine work: MCP setup, Blueprints, C++ gameplay, placing actors, lighting, materials, or checking a change in the editor. Detects the .uproject and reads the matching Unreal skill before editing."
+description: "Use when the workspace has a .uproject, or the user asks for Unreal Engine work: MCP setup, Blueprints, C++ gameplay, Enhanced Input, placing actors, lighting, materials, or checking a change in the editor. Detects the .uproject and reads the matching Unreal skill before editing."
 ---
 
 # Unreal router
 
-Detect the Unreal project, then read exactly the skills that match the task. Do this before editor edits, asset edits, or C++ gameplay changes.
+Detect the Unreal project, then read exactly the skills that match the task. Do this before editor edits, asset edits, input bindings, or C++ gameplay changes.
 
 ## 1. Detect the project
 
@@ -28,6 +28,7 @@ Then read the one domain skill for the task:
 | Blueprint classes, event graphs, Construction Script, interfaces, event dispatchers | `unreal-blueprints` |
 | C++ gameplay types, when Blueprints are not enough | `unreal-cpp-gameplay` |
 | Actor placement, levels, lighting, materials | `unreal-scene-building` |
+| Enhanced Input, input actions, mapping contexts, or player bindings | `unreal-enhanced-input` |
 
 A task that needs two domains is two passes. Finish one skill, then follow `unreal-iteration`, then start the next skill.
 

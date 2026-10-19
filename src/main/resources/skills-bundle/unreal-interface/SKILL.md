@@ -20,7 +20,7 @@ The client launches you as a subprocess and talks JSON-RPC over stdio. It is a f
 
 ## Unreal Engine
 
-When this directory contains a `.uproject`, read the sibling `unreal-router` skill and follow it before editor, asset, or gameplay work. That skill reads the MCP, Blueprint, C++, scene, and iteration skills that match the task.
+When this directory contains a `.uproject`, read the sibling `unreal-router` skill and follow it before editor, asset, or gameplay work. That skill reads the Unreal skills that match the task.
 
 ## More detail
 

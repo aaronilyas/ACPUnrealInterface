@@ -45,6 +45,21 @@ class SkillsInstallerTest {
     }
 
     @Test
+    void routerNamesEveryDomainSkill() throws Exception {
+        String router = Files.readString(Path.of("src/main/resources/skills-bundle/unreal-router/SKILL.md"));
+        for (String relative : SkillsInstaller.SKILL_FILES) {
+            if (!relative.endsWith("/SKILL.md")) {
+                continue;
+            }
+            String skill = relative.substring(0, relative.indexOf('/'));
+            if (skill.equals("unreal-router") || skill.equals("unreal-interface")) {
+                continue;
+            }
+            assertTrue(router.contains("`" + skill + "`"), skill);
+        }
+    }
+
+    @Test
     void copiesTheBundleIntoHarnessLocationsAndLeavesExistingFiles() throws Exception {
         SkillsInstaller installer = new SkillsInstaller();
         var first = installer.install(project);
