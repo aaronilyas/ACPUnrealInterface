@@ -19,6 +19,7 @@ import com.unrealinterface.acp.AgentStartupException;
 import com.unrealinterface.acp.CommandLine;
 import com.unrealinterface.acp.PermissionChoices;
 import com.unrealinterface.acp.SessionTranscript;
+import com.unrealinterface.skills.SkillInstallPolicy;
 import com.unrealinterface.skills.SkillsInstaller;
 import com.unrealinterface.unreal.UnrealMcpSetup;
 
@@ -59,9 +60,15 @@ public final class MainView {
         thread.setDaemon(true);
         return thread;
     });
+    private static final int MAX_OUTPUT_CHARS = 200_000;
+
     private final SessionTranscript transcript = new SessionTranscript();
-    private final AtomicBoolean autoApprove = new AtomicBoolean(true);
+    private final OutputBuffer outputBuffer = new OutputBuffer(MAX_OUTPUT_CHARS);
+    private final AtomicBoolean outputFlushScheduled = new AtomicBoolean();
+    private final AtomicBoolean autoApprove = new AtomicBoolean(false);
+    private final AtomicBoolean shutdownStarted = new AtomicBoolean();
     private final SkillsInstaller skillsInstaller = new SkillsInstaller();
+    private final SkillInstallPolicy skillInstalls = new SkillInstallPolicy();
     private final UnrealMcpSetup mcpSetup = new UnrealMcpSetup();
     private final AgentSession session;
     private final TextField projectField = new TextField();
@@ -92,7 +99,7 @@ public final class MainView {
         this.session = new AgentSession(new AgentSession.SessionListener() {
             @Override
             public void onUpdate(com.agentclientprotocol.sdk.spec.AcpSchema.SessionUpdate update) {
-                Platform.runLater(() -> append(transcript.accept(update)));
+                publishUpdate(update);
             }
 
             @Override
@@ -123,8 +130,21 @@ public final class MainView {
 
     public void shutdown() {
         closing = true;
-        session.close();
-        worker.shutdownNow();
+        if (!shutdownStarted.compareAndSet(false, true)) {
+            return;
+        }
+        // close() waits for the agent process (up to about ten seconds). Running it on the
+        // JavaFX thread freezes the window, so a non-daemon thread reaps the process after
+        // the window is gone and keeps the JVM alive until that finishes.
+        Thread thread = new Thread(() -> {
+            try {
+                session.close();
+            } finally {
+                worker.shutdownNow();
+            }
+        }, "unreal-interface-shutdown");
+        thread.setDaemon(false);
+        thread.start();
     }
 
     private BorderPane layout() {
@@ -136,10 +156,10 @@ public final class MainView {
         agentCombo.valueProperty().addListener((obs, previous, value) -> applyPreset(value));
         commandField.textProperty().addListener((obs, previous, value) -> markCustomIfEdited(value));
 
-        projectField.setOnAction(event -> installCommittedProject());
+        projectField.setOnAction(event -> requestInstall(SkillInstallPolicy.Trigger.AUTO));
         projectField.focusedProperty().addListener((obs, wasFocused, focused) -> {
             if (!focused) {
-                installCommittedProject();
+                requestInstall(SkillInstallPolicy.Trigger.AUTO);
             }
         });
         projectField.textProperty().addListener((obs, previous, value) -> {
@@ -166,16 +186,13 @@ public final class MainView {
             runMcpSetup(project, true);
         });
         newSession.setOnAction(event -> beginSession());
-        clear.setOnAction(event -> {
-            output.clear();
-            transcript.reset();
-        });
+        clear.setOnAction(event -> clearOutput());
         send.setOnAction(event -> sendPrompt());
-        cancel.setOnAction(event -> session.cancel());
+        cancel.setOnAction(event -> requestCancel());
         cancel.setDisable(true);
 
         CheckBox approveBox = new CheckBox("Auto-approve permissions");
-        approveBox.setSelected(true);
+        approveBox.setSelected(false);
         approveBox.selectedProperty().addListener((obs, previous, value) -> autoApprove.set(value));
 
         sessionStatus.getStyleClass().add("status");
@@ -265,11 +282,11 @@ public final class MainView {
             return;
         }
         projectField.setText(selected.getAbsolutePath());
-        installCommittedProject();
+        requestInstall(SkillInstallPolicy.Trigger.EXPLICIT);
         refreshSend();
     }
 
-    private void installCommittedProject() {
+    private void requestInstall(SkillInstallPolicy.Trigger trigger) {
         Path project = readProjectPath();
         if (project == null) {
             return;
@@ -278,7 +295,23 @@ public final class MainView {
             runMcpSetup(project, false);
             return;
         }
-        installSkills(project);
+        SkillInstallPolicy.Decision decision;
+        try {
+            decision = skillInstalls.evaluate(project, trigger);
+        } catch (IOException e) {
+            showStatus("Could not install the skills bundle: " + e.getMessage());
+            runMcpSetup(project, false);
+            return;
+        }
+        if (decision.outcome() == SkillInstallPolicy.Outcome.INSTALL) {
+            installSkills(decision.directory());
+        } else if (decision.outcome() == SkillInstallPolicy.Outcome.FORBIDDEN && decision.report()) {
+            showStatus(decision.message());
+        }
+        if (decision.outcome() == SkillInstallPolicy.Outcome.FORBIDDEN) {
+            publishMcp(project, refusedMcpTarget(), false);
+            return;
+        }
         runMcpSetup(project, false);
     }
 
@@ -324,8 +357,14 @@ public final class MainView {
         mcpStatus.setText(result.message());
         if (explicit || !result.message().equals(lastMcpMessage)) {
             lastMcpMessage = result.message();
-            append(transcript.status(result.message()));
+            showStatus(result.message());
         }
+    }
+
+    private static UnrealMcpSetup.Result refusedMcpTarget() {
+        return new UnrealMcpSetup.Result(UnrealMcpSetup.Status.FAILED,
+                "Unreal MCP was not set up. The home directory and its .claude and .agents folders are not project targets.",
+                false);
     }
 
     private void installSkills(Path project) {
@@ -334,6 +373,7 @@ public final class MainView {
                 var result = skillsInstaller.install(project);
                 showStatus(result.message());
             } catch (IOException e) {
+                skillInstalls.release(project);
                 showStatus("Could not install the skills bundle: " + e.getMessage());
             }
         });
@@ -362,7 +402,7 @@ public final class MainView {
                 var response = session.prompt(text);
                 String reason = response.stopReason() == null ? "done" : response.stopReason().value();
                 Platform.runLater(() -> {
-                    append(transcript.status("[done] " + reason));
+                    showStatus("[done] " + reason);
                     setBusy(false);
                 });
             } catch (Exception e) {
@@ -409,14 +449,31 @@ public final class MainView {
         if (sameSession && !restart) {
             return;
         }
-        var skills = skillsInstaller.install(project);
-        showStatus(skills.message());
-        publishMcp(project, mcpSetup.setup(project), false);
+        installForSession(project);
         session.start(project, command, Map.of());
         activeProject = project;
         activeCommand = List.copyOf(command);
         String label = session.agentLabel() + " · " + session.sessionId();
         Platform.runLater(() -> sessionStatus.setText(label));
+    }
+
+    private void installForSession(Path project) throws IOException {
+        SkillInstallPolicy.Decision decision = skillInstalls.evaluate(project, SkillInstallPolicy.Trigger.EXPLICIT);
+        if (decision.outcome() == SkillInstallPolicy.Outcome.INSTALL) {
+            try {
+                showStatus(skillsInstaller.install(decision.directory()).message());
+            } catch (IOException e) {
+                skillInstalls.release(decision.directory());
+                throw e;
+            }
+        } else if (decision.outcome() == SkillInstallPolicy.Outcome.FORBIDDEN && decision.report()) {
+            showStatus(decision.message());
+        }
+        if (decision.outcome() == SkillInstallPolicy.Outcome.FORBIDDEN) {
+            publishMcp(project, refusedMcpTarget(), false);
+            return;
+        }
+        publishMcp(project, mcpSetup.setup(project), false);
     }
 
     private Path requireProject() throws AgentStartupException {
@@ -439,24 +496,63 @@ public final class MainView {
         return Path.of(text.trim()).toAbsolutePath().normalize();
     }
 
+    private void publishUpdate(com.agentclientprotocol.sdk.spec.AcpSchema.SessionUpdate update) {
+        synchronized (transcript) {
+            outputBuffer.append(transcript.accept(update));
+        }
+        scheduleOutputFlush();
+    }
+
     private void showStatus(String message) {
-        if (Platform.isFxApplicationThread()) {
-            append(transcript.status(message));
-        } else {
-            Platform.runLater(() -> append(transcript.status(message)));
+        synchronized (transcript) {
+            outputBuffer.append(transcript.status(message));
+        }
+        scheduleOutputFlush();
+    }
+
+    private void clearOutput() {
+        synchronized (transcript) {
+            outputBuffer.clear();
+            transcript.reset();
+        }
+        output.clear();
+    }
+
+    private void scheduleOutputFlush() {
+        if (outputFlushScheduled.compareAndSet(false, true)) {
+            Platform.runLater(this::flushOutput);
         }
     }
 
-    private void append(String text) {
-        if (text == null || text.isEmpty()) {
+    private void flushOutput() {
+        String snapshot;
+        long version;
+        synchronized (outputBuffer) {
+            snapshot = outputBuffer.text();
+            version = outputBuffer.version();
+            outputFlushScheduled.set(false);
+        }
+        if (version != outputBuffer.version()) {
+            scheduleOutputFlush();
             return;
         }
-        output.appendText(text);
-        output.positionCaret(output.getLength());
+        output.setText(snapshot);
+        output.positionCaret(snapshot.length());
+        if (version != outputBuffer.version()) {
+            scheduleOutputFlush();
+        }
+    }
+
+    private void requestCancel() {
+        // prompt() occupies the session worker until the turn ends, and cancel() blocks
+        // until the notification is written. A separate thread keeps the JavaFX thread free.
+        Thread thread = new Thread(session::cancel, "unreal-interface-cancel");
+        thread.setDaemon(true);
+        thread.start();
     }
 
     private void showFailure(String message) {
-        append(transcript.status(message));
+        showStatus(message);
         if (closing) {
             return;
         }
@@ -490,7 +586,7 @@ public final class MainView {
 
     private String choosePermission(String summary, List<PermissionOption> options) throws InterruptedException {
         if (autoApprove.get()) {
-            String allowed = PermissionChoices.preferredAllow(options);
+            String allowed = PermissionChoices.allowOnce(options);
             if (allowed != null) {
                 return allowed;
             }

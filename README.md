@@ -33,12 +33,12 @@ mvn test
 mvn javafx:run
 ```
 
-1. Choose a project directory, or type one and leave the field. The app copies the skills bundle into `.agents/skills/` (Codex, Cursor, Gemini CLI) and `.claude/skills/` (Claude Code). It also writes `AGENTS.md` and a `CLAUDE.md` that imports it. The same copy runs when a session starts. Files you have edited are left alone. When the folder contains a `.uproject`, the app also enables the Unreal MCP plugins, turns on auto-start, and writes `.mcp.json`. **Setup Unreal MCP** runs that step again. A folder with no `.uproject`, or a machine without Unreal Engine 5.8 or newer, gets a status line that says what to do next.
-2. Pick an agent. **Claude** and **Codex** fill the command field with their ACP adapters. **Custom** is any command you type. The command is executed directly, not through a shell, so quotes work and pipes do not.
+1. Choose a project directory with **Browse**, or type a path and leave the field. Browse and starting a session copy the skills bundle into that directory. Leaving the field copies it only when the directory contains a `.uproject`. The copy never targets your home directory or its `.claude` and `.agents` folders, and it runs once per directory. Files land in `.agents/skills/` (Codex, Cursor, Gemini CLI) and `.claude/skills/` (Claude Code), plus `AGENTS.md` and a `CLAUDE.md` that imports it. Files you have edited are left alone. A `.agents` or `.claude` symlink that points outside the project is refused. When the folder contains a `.uproject`, the app also enables the Unreal MCP plugins, turns on auto-start, and writes `.mcp.json`. **Setup Unreal MCP** runs that step again. A folder with no `.uproject`, or a machine without Unreal Engine 5.8 or newer, gets a status line that says what to do next.
+2. Pick an agent. **Claude** and **Codex** fill the command field with their ACP adapters. **Custom** is any command you type. The command is split on words, not run through a shell. The program is resolved to an absolute path before the project becomes the working directory, so a file in the project cannot shadow `npx` or another command.
 3. Click **New session**, or type a prompt and press **Send** (Ctrl+Enter). The first send opens the session.
 4. The output pane streams assistant text, thoughts, tool calls, plans, and status. **Cancel** sends `session/cancel`. **Clear** wipes the pane and leaves the session running. **New session** starts a fresh agent process.
 
-Auto-approve answers permission requests with the agent's allow-once option when it offers one. Turn it off to pick an option in a dialog.
+Permission requests open a dialog. **Auto-approve permissions** is off. Turn it on to select the agent's allow-once option when it offers one. An allow-always option is never selected automatically.
 
 ### Agent commands
 
@@ -58,7 +58,7 @@ Auto-approve answers permission requests with the agent's allow-once option when
 - `session/update` rendered in the output pane
 - `session/cancel`
 - `session/request_permission`
-- `fs/read_text_file` and `fs/write_text_file`, limited to the project directory
+- `fs/read_text_file` and `fs/write_text_file`, limited to the project directory. Symlinks and hard links that reach outside the project are rejected. A read above 4 MiB, or a write above 4 million characters, is rejected.
 
 Terminal sessions stay inside the agent. UnrealInterface does not run commands for it.
 

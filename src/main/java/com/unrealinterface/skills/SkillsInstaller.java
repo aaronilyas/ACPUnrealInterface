@@ -2,15 +2,21 @@ package com.unrealinterface.skills;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
 import java.util.List;
+
+import com.unrealinterface.acp.ProjectFiles;
 
 /**
  * Copies the bundled Agent Skills into the directories the harnesses search,
  * and copies the project instruction files those harnesses load every session.
- * A file that is already there is left alone, so local edits survive.
+ * A file that is already there is left alone, so local edits survive. A
+ * destination whose real path leaves the project (a symlinked {@code .claude}
+ * or {@code .agents}, for example) is refused before anything is copied.
  *
  * Skills land in {@code .agents/skills} (Codex, Cursor, Gemini CLI) and
  * {@code .claude/skills} (Claude Code). {@code AGENTS.md} is the instruction
@@ -53,38 +59,47 @@ public final class SkillsInstaller {
         }
     }
 
+    private record PlannedCopy(String relative, Path target) {
+    }
+
     public InstallResult install(Path projectDirectory) throws IOException {
         if (projectDirectory == null || !Files.isDirectory(projectDirectory)) {
             throw new IOException("Project directory does not exist: " + projectDirectory);
         }
-        int created = 0;
-        int leftInPlace = 0;
+        List<PlannedCopy> planned = new ArrayList<>();
         for (Path destination : SKILL_DESTINATIONS) {
             for (String relative : SKILL_FILES) {
-                if (copyIfAbsent(relative, projectDirectory.resolve(destination).resolve(relative))) {
-                    created++;
-                } else {
-                    leftInPlace++;
-                }
+                plan(planned, projectDirectory, relative, projectDirectory.resolve(destination).resolve(relative));
             }
         }
         for (String relative : PROJECT_ROOT_FILES) {
-            Path target = projectDirectory.resolve(Path.of(relative).getFileName());
-            if (copyIfAbsent(relative, target)) {
+            plan(planned, projectDirectory, relative, projectDirectory.resolve(Path.of(relative).getFileName()));
+        }
+        int created = 0;
+        int leftInPlace = 0;
+        for (PlannedCopy copy : planned) {
+            if (Files.exists(copy.target(), LinkOption.NOFOLLOW_LINKS)) {
+                leftInPlace++;
+                continue;
+            }
+            try {
+                copyResource(copy.relative(), copy.target());
                 created++;
-            } else {
+            } catch (FileAlreadyExistsException e) {
                 leftInPlace++;
             }
         }
         return new InstallResult(created, leftInPlace);
     }
 
-    private static boolean copyIfAbsent(String resourceRelative, Path target) throws IOException {
-        if (Files.exists(target)) {
-            return false;
+    private static void plan(List<PlannedCopy> planned, Path projectDirectory, String relative, Path lexical)
+            throws IOException {
+        Path normalized = lexical.normalize();
+        try {
+            planned.add(new PlannedCopy(relative, ProjectFiles.resolveInside(projectDirectory, normalized.toString())));
+        } catch (IllegalArgumentException e) {
+            throw new IOException("Refusing to copy skills outside the project: " + normalized, e);
         }
-        copyResource(resourceRelative, target);
-        return true;
     }
 
     private static void copyResource(String relative, Path target) throws IOException {
@@ -97,7 +112,7 @@ public final class SkillsInstaller {
             if (parent != null) {
                 Files.createDirectories(parent);
             }
-            Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING);
+            Files.copy(input, target);
         }
     }
 }

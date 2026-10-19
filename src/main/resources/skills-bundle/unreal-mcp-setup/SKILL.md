@@ -100,7 +100,7 @@ A single launch can also pass `-ModelContextProtocolStartServer`. Prefer the ini
 
 ## 3. Client config
 
-Write these files in the project directory, next to the `.uproject`. That is the directory UnrealInterface uses as the agent working directory. Do not require the editor console.
+Write these files in the project directory, next to the `.uproject`. That is the directory UnrealInterface uses as the agent working directory. Do that for a launcher build and for a source build. Do not walk parents looking for an `Engine` folder, and do not write the file beside `Engine/`. Claude Code and Cursor load `.mcp.json` from the directory the session was started in. Do not require the editor console.
 
 `.mcp.json`:
 
@@ -120,7 +120,7 @@ Write these files in the project directory, next to the `.uproject`. That is the
 - If `mcpServers` is missing, create the object. If it is not an object, stop and report the file. Do not overwrite it.
 - If the file is not valid JSON, stop and report it. Do not overwrite it.
 
-Codex reads `.codex/config.toml` in the project directory, not `.mcp.json`:
+Codex reads `.codex/config.toml` in that same project directory, not `.mcp.json` and not a file beside `Engine/`:
 
 ```toml
 [mcp_servers.unreal-mcp]
@@ -136,7 +136,7 @@ url = "http://127.0.0.1:8000/mcp"
 
 `ModelContextProtocol.GenerateClientConfig` can write Claude Code, Cursor, VS Code, Gemini, and Codex configs once the editor is running. Codex refuses to overwrite an existing toml, so edit that file directly. Skip the console command once `.mcp.json` and the Codex table match the endpoint.
 
-Source build: Epic's command writes `.mcp.json` beside `Engine/`, because the editor root is the engine tree. When the agent cwd is a parent that contains `Engine/` and that directory is not the project directory, write the same `.mcp.json` and Codex table there too. UnrealInterface writes only the project directory.
+Source build: Epic's command writes `.mcp.json` beside `Engine/`, because the editor root is the engine tree. Do not copy that file. A session started in the project does not read a file next to the engine. Write `.mcp.json` and the Codex table only in the project directory.
 
 ## Restart and check
 

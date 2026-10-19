@@ -22,6 +22,15 @@ class PermissionChoicesTest {
     }
 
     @Test
+    void autoApproveSelectsOnlyAllowOnce() {
+        var always = List.of(new PermissionOption("always", "Always", PermissionOptionKind.ALLOW_ALWAYS));
+        assertNull(PermissionChoices.allowOnce(always));
+        assertEquals("once", PermissionChoices.allowOnce(List.of(
+                new PermissionOption("always", "Always", PermissionOptionKind.ALLOW_ALWAYS),
+                new PermissionOption("once", "Once", PermissionOptionKind.ALLOW_ONCE))));
+    }
+
+    @Test
     void returnsNullWhenNothingAllows() {
         var options = List.of(new PermissionOption("no", "No", PermissionOptionKind.REJECT_ONCE));
         assertNull(PermissionChoices.preferredAllow(options));

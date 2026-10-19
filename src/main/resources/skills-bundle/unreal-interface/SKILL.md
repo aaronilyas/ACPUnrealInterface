@@ -14,8 +14,8 @@ The client launches you as a subprocess and talks JSON-RPC over stdio. It is a f
 - Treat the session working directory as the project root.
 - Read and edit project files, and run commands, with your own tools.
 - Report progress as ordinary ACP session updates: assistant text, tool calls, and plans. The window shows those as they arrive.
-- The client can answer `fs/read_text_file` and `fs/write_text_file` only for files inside this project. Paths outside the project are rejected. Use your own tools for anything else.
-- Permission requests are approved in the window, or automatically when the user turned auto-approve on.
+- The client can answer `fs/read_text_file` and `fs/write_text_file` only for files inside this project. Paths outside the project are rejected, including symlinks and hard links that leave the project. Reads above 4 MiB are rejected. Use your own tools for anything else.
+- Permission requests are shown in the window. Auto-approve is off unless the user turns it on, and then it selects only an allow-once option.
 - Do not try to implement features inside the UnrealInterface application unless the user asked you to change that program.
 
 ## Unreal Engine

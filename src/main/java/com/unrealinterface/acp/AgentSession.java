@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.time.Duration;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.IdentityHashMap;
@@ -37,6 +38,9 @@ import com.agentclientprotocol.sdk.spec.AcpSchema.WriteTextFileResponse;
 public final class AgentSession implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(AgentSession.class);
+
+    /** One stderr line kept for the pane and for handshake errors. */
+    private static final int MAX_STDERR_LINE = 2_000;
 
     /** Receives session traffic. Callers marshal to their own thread. */
     public interface SessionListener {
@@ -105,11 +109,14 @@ public final class AgentSession implements AutoCloseable {
             throw new AgentStartupException(AgentStartupException.Kind.NOT_READY, "Agent command is empty");
         }
         String program = command.get(0);
-        if (!CommandLine.isExecutable(program)) {
+        String resolvedProgram = CommandLine.resolveExecutable(program);
+        if (resolvedProgram == null) {
             throw new AgentStartupException(AgentStartupException.Kind.MISSING_BINARY,
                     "Could not start the agent. Program not found on PATH: " + program
                             + ". Install it, or set a custom command that launches an ACP agent.");
         }
+        List<String> argv = new ArrayList<>(command);
+        argv.set(0, resolvedProgram);
         synchronized (lock) {
             if (closed) {
                 throw new AgentStartupException(AgentStartupException.Kind.NOT_READY, "Session is closed");
@@ -124,9 +131,9 @@ public final class AgentSession implements AutoCloseable {
         this.projectDirectory = projectDirectory.toAbsolutePath().normalize();
         listener.onStatus("Starting " + String.join(" ", command));
 
-        AgentParameters.Builder params = AgentParameters.builder(program);
-        if (command.size() > 1) {
-            params.args(command.subList(1, command.size()));
+        AgentParameters.Builder params = AgentParameters.builder(resolvedProgram);
+        if (argv.size() > 1) {
+            params.args(argv.subList(1, argv.size()));
         }
         if (environment != null && !environment.isEmpty()) {
             params.env(environment);
@@ -278,6 +285,9 @@ public final class AgentSession implements AutoCloseable {
     }
 
     private void onStderr(String line) {
+        if (line != null && line.length() > MAX_STDERR_LINE) {
+            line = line.substring(0, MAX_STDERR_LINE) + "…";
+        }
         synchronized (stderrTail) {
             stderrTail.addLast(line);
             while (stderrTail.size() > 40) {

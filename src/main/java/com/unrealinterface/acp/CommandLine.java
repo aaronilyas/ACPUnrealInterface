@@ -2,6 +2,7 @@ package com.unrealinterface.acp;
 
 import java.io.File;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -9,6 +10,12 @@ import java.util.List;
 /**
  * Splits an agent command the way a shell would split words, without starting a shell.
  * ACP agents must own stdout, so the program is executed directly.
+ *
+ * <p>The program is resolved to an absolute path before the process starts. The agent
+ * working directory is the project, which is not a trusted place to look up a command:
+ * a relative program is resolved against this process's directory, and a bare name is
+ * taken only from an absolute PATH entry. Entries of {@code .} or a relative directory
+ * are skipped so a file in the project cannot shadow {@code npx} or {@code python3}.
  */
 public final class CommandLine {
 
@@ -85,25 +92,58 @@ public final class CommandLine {
     }
 
     public static boolean isExecutable(String program) {
-        if (program == null || program.isBlank()) {
-            return false;
+        return resolveExecutable(program) != null;
+    }
+
+    /**
+     * Absolute path of {@code program}, or null when it is not an executable file.
+     */
+    public static String resolveExecutable(String program) {
+        return resolveExecutable(program, System.getenv("PATH"), Path.of(System.getProperty("user.dir", ".")));
+    }
+
+    static String resolveExecutable(String program, String pathEnv, Path baseDirectory) {
+        if (program == null || program.isBlank() || program.indexOf('\0') >= 0) {
+            return null;
         }
-        Path path = Path.of(program);
-        if (program.contains("/") || program.contains("\\")) {
-            return Files.isExecutable(path);
+        try {
+            if (isExplicitPath(program)) {
+                Path path = Path.of(program);
+                Path absolute = path.isAbsolute() ? path.normalize() : baseDirectory.resolve(path).normalize();
+                return executableFile(absolute) ? absolute.toString() : null;
+            }
+        } catch (InvalidPathException e) {
+            return null;
         }
-        String pathEnv = System.getenv("PATH");
         if (pathEnv == null || pathEnv.isBlank()) {
-            return false;
+            return null;
         }
         for (String directory : pathEnv.split(File.pathSeparator)) {
-            if (directory.isEmpty()) {
+            if (directory.isEmpty() || ".".equals(directory)) {
                 continue;
             }
-            if (Files.isExecutable(Path.of(directory).resolve(program))) {
-                return true;
+            Path dir;
+            try {
+                dir = Path.of(directory);
+            } catch (InvalidPathException e) {
+                continue;
+            }
+            if (!dir.isAbsolute()) {
+                continue;
+            }
+            Path candidate = dir.resolve(program).normalize();
+            if (executableFile(candidate)) {
+                return candidate.toString();
             }
         }
-        return false;
+        return null;
+    }
+
+    private static boolean isExplicitPath(String program) {
+        return program.indexOf('/') >= 0 || program.indexOf('\\') >= 0;
+    }
+
+    private static boolean executableFile(Path candidate) {
+        return Files.isExecutable(candidate) && !Files.isDirectory(candidate);
     }
 }
