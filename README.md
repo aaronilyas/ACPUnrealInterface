@@ -25,7 +25,11 @@ mise install
 mvn test
 ```
 
-`mvn test` compiles the app and starts a local ACP agent process (a small Python peer). That test checks `initialize`, `session/new`, a `session/prompt` round trip, streamed `session/update` notifications, and a project file read requested by the agent. It also checks a missing program and a process that exits before the handshake.
+`mvn test` compiles the app and starts a local ACP agent process (a small Python peer). That test checks `initialize`, `session/new`, a `session/prompt` round trip, streamed `session/update` notifications, and a project file read requested by the agent. It also checks a missing program and a process that exits before the handshake. A smoke test copies the skills bundle into a temporary project and checks that Unreal MCP setup writes the plugin entries, the auto-start ini fragment, and `.mcp.json`.
+
+## Continuous integration
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs `mvn test` on every push and pull request to `main`. The runner is Ubuntu with Temurin 17. `python3` has to be on `PATH` for the ACP session test.
 
 ## Run
 
@@ -131,6 +135,7 @@ src/main/java/com/unrealinterface/unreal/UnrealMcpSetup.java   Unreal MCP projec
 src/main/resources/skills-bundle/                           Skills and AGENTS.md copied into projects
 src/test/resources/fake_agent.py                            Local ACP peer used by tests
 scripts/package.sh                                          jpackage app image
+.github/workflows/ci.yml                                    GitHub Actions test workflow
 ```
 
 ## License
