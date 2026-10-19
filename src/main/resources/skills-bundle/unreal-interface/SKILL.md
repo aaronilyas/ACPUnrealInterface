@@ -18,6 +18,10 @@ The client launches you as a subprocess and talks JSON-RPC over stdio. It is a f
 - Permission requests are approved in the window, or automatically when the user turned auto-approve on.
 - Do not try to implement features inside the UnrealInterface application unless the user asked you to change that program.
 
+## Unreal Engine
+
+When this directory contains a `.uproject`, read the sibling `unreal-router` skill and follow it before editor, asset, or gameplay work. That skill reads the MCP, Blueprint, C++, scene, and iteration skills that match the task.
+
 ## More detail
 
 See [reference.md](reference.md) in this skill folder for the client surface and the directories the skill is copied to.

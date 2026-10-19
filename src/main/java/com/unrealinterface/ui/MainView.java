@@ -126,6 +126,12 @@ public final class MainView {
         agentCombo.valueProperty().addListener((obs, previous, value) -> applyPreset(value));
         commandField.textProperty().addListener((obs, previous, value) -> markCustomIfEdited(value));
 
+        projectField.setOnAction(event -> installCommittedProject());
+        projectField.focusedProperty().addListener((obs, wasFocused, focused) -> {
+            if (!focused) {
+                installCommittedProject();
+            }
+        });
         browse.setOnAction(event -> chooseProject());
         newSession.setOnAction(event -> beginSession());
         clear.setOnAction(event -> {
@@ -222,8 +228,15 @@ public final class MainView {
             return;
         }
         projectField.setText(selected.getAbsolutePath());
-        installSkills(selected.toPath());
+        installCommittedProject();
         refreshSend();
+    }
+
+    private void installCommittedProject() {
+        Path project = readProjectPath();
+        if (project != null && Files.isDirectory(project)) {
+            installSkills(project);
+        }
     }
 
     private void installSkills(Path project) {
