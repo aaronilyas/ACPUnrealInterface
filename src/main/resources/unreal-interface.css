@@ -1,0 +1,22 @@
+.root {
+    -fx-font-size: 13px;
+}
+
+.label {
+    -fx-text-fill: #1f2430;
+}
+
+.output {
+    -fx-font-family: "monospace";
+    -fx-font-size: 13px;
+    -fx-control-inner-background: #f6f4ef;
+}
+
+.prompt {
+    -fx-font-family: "monospace";
+    -fx-font-size: 13px;
+}
+
+.status {
+    -fx-text-fill: #4a5160;
+}
