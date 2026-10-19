@@ -5,7 +5,7 @@ UnrealInterface copies this skill into the opened project so an agent can discov
 - `.agents/skills/unreal-interface/` for Codex, Cursor, Gemini CLI, and other harnesses that read `.agents/skills`
 - `.claude/skills/unreal-interface/` for Claude Code, which does not read `.agents/skills`
 
-Existing files are left in place. Delete a copied file if you want the client to write it again the next time the project is opened.
+Existing files are left in place. Delete a copied file if you want the client to write it again the next time the project is opened. A `.agents` or `.claude` symlink that points outside the project is not followed.
 
 ## Session lifecycle
 

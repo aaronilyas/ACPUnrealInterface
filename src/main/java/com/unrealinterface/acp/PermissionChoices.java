@@ -3,6 +3,7 @@ package com.unrealinterface.acp;
 import java.util.List;
 
 import com.agentclientprotocol.sdk.spec.AcpSchema.PermissionOption;
+import com.agentclientprotocol.sdk.spec.AcpSchema.PermissionOptionKind;
 import com.agentclientprotocol.sdk.spec.AcpSchema.RequestPermissionRequest;
 
 public final class PermissionChoices {
@@ -11,8 +12,25 @@ public final class PermissionChoices {
     }
 
     /**
+     * The allow-once option, or null. Auto-approve uses this and never falls
+     * through to allow-always, which would persist a grant the user did not confirm.
+     */
+    public static String allowOnce(List<PermissionOption> options) {
+        if (options == null || options.isEmpty()) {
+            return null;
+        }
+        for (PermissionOption option : options) {
+            if (option.kind() == PermissionOptionKind.ALLOW_ONCE) {
+                return option.optionId();
+            }
+        }
+        return null;
+    }
+
+    /**
      * Prefers a one-shot allow over an allow-always option. Returns null when the
-     * agent offered no allow option.
+     * agent offered no allow option. Callers that grant silently must use
+     * {@link #allowOnce} instead of this fallback.
      */
     public static String preferredAllow(List<PermissionOption> options) {
         if (options == null || options.isEmpty()) {

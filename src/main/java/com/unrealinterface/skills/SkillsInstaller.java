@@ -2,14 +2,20 @@ package com.unrealinterface.skills;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
 import java.util.List;
+
+import com.unrealinterface.acp.ProjectFiles;
 
 /**
  * Copies the bundled skill into the project directories agents already search.
- * A file that is already there is left alone, so local edits survive.
+ * A file that is already there is left alone, so local edits survive. A
+ * destination whose real path leaves the project (a symlinked {@code .claude}
+ * or {@code .agents}, for example) is refused before anything is copied.
  */
 public final class SkillsInstaller {
 
@@ -35,21 +41,36 @@ public final class SkillsInstaller {
         }
     }
 
+    private record PlannedCopy(String relative, Path target) {
+    }
+
     public InstallResult install(Path projectDirectory) throws IOException {
         if (projectDirectory == null || !Files.isDirectory(projectDirectory)) {
             throw new IOException("Project directory does not exist: " + projectDirectory);
         }
-        int created = 0;
-        int leftInPlace = 0;
+        List<PlannedCopy> planned = new ArrayList<>();
         for (Path destination : DESTINATIONS) {
             for (String relative : FILES) {
-                Path target = projectDirectory.resolve(destination).resolve(relative);
-                if (Files.exists(target)) {
-                    leftInPlace++;
-                    continue;
+                Path lexical = projectDirectory.resolve(destination).resolve(relative).normalize();
+                try {
+                    planned.add(new PlannedCopy(relative, ProjectFiles.resolveInside(projectDirectory, lexical.toString())));
+                } catch (IllegalArgumentException e) {
+                    throw new IOException("Refusing to copy skills outside the project: " + lexical, e);
                 }
-                copyResource(relative, target);
+            }
+        }
+        int created = 0;
+        int leftInPlace = 0;
+        for (PlannedCopy copy : planned) {
+            if (Files.exists(copy.target(), LinkOption.NOFOLLOW_LINKS)) {
+                leftInPlace++;
+                continue;
+            }
+            try {
+                copyResource(copy.relative(), copy.target());
                 created++;
+            } catch (FileAlreadyExistsException e) {
+                leftInPlace++;
             }
         }
         return new InstallResult(created, leftInPlace);
@@ -65,7 +86,7 @@ public final class SkillsInstaller {
             if (parent != null) {
                 Files.createDirectories(parent);
             }
-            Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING);
+            Files.copy(input, target);
         }
     }
 }
