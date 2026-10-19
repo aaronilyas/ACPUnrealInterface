@@ -19,6 +19,7 @@ import com.unrealinterface.acp.AgentStartupException;
 import com.unrealinterface.acp.CommandLine;
 import com.unrealinterface.acp.PermissionChoices;
 import com.unrealinterface.acp.SessionTranscript;
+import com.unrealinterface.skills.SkillInstallPolicy;
 import com.unrealinterface.skills.SkillsInstaller;
 
 import com.agentclientprotocol.sdk.spec.AcpSchema.PermissionOption;
@@ -64,6 +65,7 @@ public final class MainView {
     private final AtomicBoolean autoApprove = new AtomicBoolean(false);
     private final AtomicBoolean shutdownStarted = new AtomicBoolean();
     private final SkillsInstaller skillsInstaller = new SkillsInstaller();
+    private final SkillInstallPolicy skillInstalls = new SkillInstallPolicy();
     private final AgentSession session;
     private final TextField projectField = new TextField();
     private final TextField commandField = new TextField();
@@ -144,6 +146,12 @@ public final class MainView {
         agentCombo.valueProperty().addListener((obs, previous, value) -> applyPreset(value));
         commandField.textProperty().addListener((obs, previous, value) -> markCustomIfEdited(value));
 
+        projectField.setOnAction(event -> requestInstall(SkillInstallPolicy.Trigger.AUTO));
+        projectField.focusedProperty().addListener((obs, wasFocused, focused) -> {
+            if (!focused) {
+                requestInstall(SkillInstallPolicy.Trigger.AUTO);
+            }
+        });
         browse.setOnAction(event -> chooseProject());
         newSession.setOnAction(event -> beginSession());
         clear.setOnAction(event -> clearOutput());
@@ -237,8 +245,27 @@ public final class MainView {
             return;
         }
         projectField.setText(selected.getAbsolutePath());
-        installSkills(selected.toPath());
+        requestInstall(SkillInstallPolicy.Trigger.EXPLICIT);
         refreshSend();
+    }
+
+    private void requestInstall(SkillInstallPolicy.Trigger trigger) {
+        Path project = readProjectPath();
+        if (project == null) {
+            return;
+        }
+        SkillInstallPolicy.Decision decision;
+        try {
+            decision = skillInstalls.evaluate(project, trigger);
+        } catch (IOException e) {
+            showStatus("Could not install the skills bundle: " + e.getMessage());
+            return;
+        }
+        if (decision.outcome() == SkillInstallPolicy.Outcome.INSTALL) {
+            installSkills(decision.directory());
+        } else if (decision.outcome() == SkillInstallPolicy.Outcome.FORBIDDEN && decision.report()) {
+            showStatus(decision.message());
+        }
     }
 
     private void installSkills(Path project) {
@@ -247,6 +274,7 @@ public final class MainView {
                 var result = skillsInstaller.install(project);
                 showStatus(result.message());
             } catch (IOException e) {
+                skillInstalls.release(project);
                 showStatus("Could not install the skills bundle: " + e.getMessage());
             }
         });
@@ -322,13 +350,26 @@ public final class MainView {
         if (sameSession && !restart) {
             return;
         }
-        var skills = skillsInstaller.install(project);
-        showStatus(skills.message());
+        installForSession(project);
         session.start(project, command, Map.of());
         activeProject = project;
         activeCommand = List.copyOf(command);
         String label = session.agentLabel() + " · " + session.sessionId();
         Platform.runLater(() -> sessionStatus.setText(label));
+    }
+
+    private void installForSession(Path project) throws IOException {
+        SkillInstallPolicy.Decision decision = skillInstalls.evaluate(project, SkillInstallPolicy.Trigger.EXPLICIT);
+        if (decision.outcome() == SkillInstallPolicy.Outcome.INSTALL) {
+            try {
+                showStatus(skillsInstaller.install(decision.directory()).message());
+            } catch (IOException e) {
+                skillInstalls.release(decision.directory());
+                throw e;
+            }
+        } else if (decision.outcome() == SkillInstallPolicy.Outcome.FORBIDDEN && decision.report()) {
+            showStatus(decision.message());
+        }
     }
 
     private Path requireProject() throws AgentStartupException {
