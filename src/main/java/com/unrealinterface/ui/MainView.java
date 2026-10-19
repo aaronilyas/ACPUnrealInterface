@@ -21,6 +21,7 @@ import com.unrealinterface.acp.PermissionChoices;
 import com.unrealinterface.acp.SessionTranscript;
 import com.unrealinterface.skills.SkillInstallPolicy;
 import com.unrealinterface.skills.SkillsInstaller;
+import com.unrealinterface.unreal.UnrealMcpSetup;
 
 import com.agentclientprotocol.sdk.spec.AcpSchema.PermissionOption;
 
@@ -38,6 +39,7 @@ import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
+import javafx.scene.control.Tooltip;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.BorderPane;
@@ -45,6 +47,7 @@ import javafx.scene.layout.ColumnConstraints;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.Stage;
@@ -66,6 +69,7 @@ public final class MainView {
     private final AtomicBoolean shutdownStarted = new AtomicBoolean();
     private final SkillsInstaller skillsInstaller = new SkillsInstaller();
     private final SkillInstallPolicy skillInstalls = new SkillInstallPolicy();
+    private final UnrealMcpSetup mcpSetup = new UnrealMcpSetup();
     private final AgentSession session;
     private final TextField projectField = new TextField();
     private final TextField commandField = new TextField();
@@ -77,12 +81,18 @@ public final class MainView {
     private final Button cancel = new Button("Cancel");
     private final Button newSession = new Button("New session");
     private final Button browse = new Button("Browse");
+    private final Button setupMcp = new Button("Setup Unreal MCP");
     private final Button clear = new Button("Clear");
+    private final Label mcpStatus = new Label(
+            "Unreal MCP: select a folder with a .uproject. A new project needs Unreal Editor 5.8 or newer.");
     private boolean busy;
     private boolean adjustingCommand;
     private volatile boolean closing;
     private Path activeProject;
     private List<String> activeCommand = List.of();
+    private Path lastAutoSetup;
+    private Path setupQueued;
+    private String lastMcpMessage = "";
 
     public MainView(Stage stage) {
         this.stage = stage;
@@ -107,7 +117,7 @@ public final class MainView {
     public void show() {
         stage.setTitle("UnrealInterface");
         stage.setScene(new Scene(layout(), 1040, 720));
-        stage.setMinWidth(860);
+        stage.setMinWidth(980);
         stage.setMinHeight(560);
         var stylesheet = MainView.class.getResource("/unreal-interface.css");
         if (stylesheet != null) {
@@ -115,7 +125,7 @@ public final class MainView {
         }
         stage.setOnCloseRequest(event -> shutdown());
         stage.show();
-        showStatus("Choose a project directory, then send a prompt. Ctrl+Enter sends.");
+        showStatus("Choose a project directory. A folder with a .uproject is configured for Unreal MCP automatically. Ctrl+Enter sends.");
     }
 
     public void shutdown() {
@@ -152,7 +162,29 @@ public final class MainView {
                 requestInstall(SkillInstallPolicy.Trigger.AUTO);
             }
         });
+        projectField.textProperty().addListener((obs, previous, value) -> {
+            Path now = readProjectPath();
+            if (lastAutoSetup != null && !lastAutoSetup.equals(now)) {
+                lastAutoSetup = null;
+            }
+            if (setupQueued != null && !setupQueued.equals(now)) {
+                setupQueued = null;
+            }
+        });
         browse.setOnAction(event -> chooseProject());
+        browse.setMinWidth(Region.USE_PREF_SIZE);
+        setupMcp.setMinWidth(Region.USE_PREF_SIZE);
+        setupMcp.setTooltip(new Tooltip(
+                "Enable ModelContextProtocol and AllToolsets, auto-start the MCP server, and write .mcp.json"));
+        setupMcp.setOnAction(event -> {
+            Path project = readProjectPath();
+            if (project == null) {
+                publishMcp(null, new UnrealMcpSetup.Result(UnrealMcpSetup.Status.NO_PROJECT,
+                        "Choose a project directory, then click Setup Unreal MCP.", false), true);
+                return;
+            }
+            runMcpSetup(project, true);
+        });
         newSession.setOnAction(event -> beginSession());
         clear.setOnAction(event -> clearOutput());
         send.setOnAction(event -> sendPrompt());
@@ -164,6 +196,8 @@ public final class MainView {
         approveBox.selectedProperty().addListener((obs, previous, value) -> autoApprove.set(value));
 
         sessionStatus.getStyleClass().add("status");
+        mcpStatus.getStyleClass().add("status");
+        mcpStatus.setWrapText(true);
         output.setEditable(false);
         output.setWrapText(true);
         output.getStyleClass().add("output");
@@ -184,19 +218,21 @@ public final class MainView {
         form.setVgap(8);
         ColumnConstraints grow = new ColumnConstraints();
         grow.setHgrow(Priority.ALWAYS);
-        form.getColumnConstraints().addAll(new ColumnConstraints(), new ColumnConstraints(), grow, new ColumnConstraints());
+        form.getColumnConstraints().addAll(new ColumnConstraints(), new ColumnConstraints(), grow,
+                new ColumnConstraints(), new ColumnConstraints());
         form.add(new Label("Project"), 0, 0);
         form.add(projectField, 1, 0, 2, 1);
         form.add(browse, 3, 0);
+        form.add(setupMcp, 4, 0);
         form.add(new Label("Agent"), 0, 1);
         form.add(agentCombo, 1, 1);
-        form.add(commandField, 2, 1, 2, 1);
+        form.add(commandField, 2, 1, 3, 1);
         GridPane.setHgrow(projectField, Priority.ALWAYS);
         GridPane.setHgrow(commandField, Priority.ALWAYS);
 
         HBox actions = new HBox(8, newSession, clear, approveBox, sessionStatus);
         actions.setAlignment(Pos.CENTER_LEFT);
-        VBox top = new VBox(8, form, actions);
+        VBox top = new VBox(8, form, mcpStatus, actions);
 
         HBox promptBar = new HBox(8, send, cancel);
         promptBar.setAlignment(Pos.CENTER_RIGHT);
@@ -205,6 +241,7 @@ public final class MainView {
         BorderPane root = new BorderPane(output, top, null, bottom, null);
         root.setPadding(new Insets(12));
         BorderPane.setMargin(output, new Insets(10, 0, 10, 0));
+        mcpStatus.maxWidthProperty().bind(root.widthProperty().subtract(24));
         refreshSend();
         return root;
     }
@@ -254,11 +291,16 @@ public final class MainView {
         if (project == null) {
             return;
         }
+        if (!Files.isDirectory(project)) {
+            runMcpSetup(project, false);
+            return;
+        }
         SkillInstallPolicy.Decision decision;
         try {
             decision = skillInstalls.evaluate(project, trigger);
         } catch (IOException e) {
             showStatus("Could not install the skills bundle: " + e.getMessage());
+            runMcpSetup(project, false);
             return;
         }
         if (decision.outcome() == SkillInstallPolicy.Outcome.INSTALL) {
@@ -266,6 +308,63 @@ public final class MainView {
         } else if (decision.outcome() == SkillInstallPolicy.Outcome.FORBIDDEN && decision.report()) {
             showStatus(decision.message());
         }
+        if (decision.outcome() == SkillInstallPolicy.Outcome.FORBIDDEN) {
+            publishMcp(project, refusedMcpTarget(), false);
+            return;
+        }
+        runMcpSetup(project, false);
+    }
+
+    private void runMcpSetup(Path project, boolean explicit) {
+        if (!explicit && (project.equals(lastAutoSetup) || project.equals(setupQueued))) {
+            return;
+        }
+        if (!explicit) {
+            setupQueued = project;
+        }
+        worker.execute(() -> {
+            UnrealMcpSetup.Result result = mcpSetup.setup(project);
+            Platform.runLater(() -> {
+                if (project.equals(setupQueued)) {
+                    setupQueued = null;
+                }
+                publishMcp(project, result, explicit);
+            });
+        });
+    }
+
+    private void publishMcp(Path project, UnrealMcpSetup.Result result, boolean explicit) {
+        if (!Platform.isFxApplicationThread()) {
+            Platform.runLater(() -> publishMcp(project, result, explicit));
+            return;
+        }
+        if (closing) {
+            return;
+        }
+        Path current = readProjectPath();
+        if (project != null && !project.equals(current)) {
+            return;
+        }
+        if (project != null && project.equals(current)) {
+            lastAutoSetup = project;
+        }
+        mcpStatus.getStyleClass().removeAll("status-ok", "status-warn", "status-bad");
+        mcpStatus.getStyleClass().add(switch (result.status()) {
+            case CONFIGURED, READY -> "status-ok";
+            case FAILED -> "status-bad";
+            default -> "status-warn";
+        });
+        mcpStatus.setText(result.message());
+        if (explicit || !result.message().equals(lastMcpMessage)) {
+            lastMcpMessage = result.message();
+            showStatus(result.message());
+        }
+    }
+
+    private static UnrealMcpSetup.Result refusedMcpTarget() {
+        return new UnrealMcpSetup.Result(UnrealMcpSetup.Status.FAILED,
+                "Unreal MCP was not set up. The home directory and its .claude and .agents folders are not project targets.",
+                false);
     }
 
     private void installSkills(Path project) {
@@ -370,6 +469,11 @@ public final class MainView {
         } else if (decision.outcome() == SkillInstallPolicy.Outcome.FORBIDDEN && decision.report()) {
             showStatus(decision.message());
         }
+        if (decision.outcome() == SkillInstallPolicy.Outcome.FORBIDDEN) {
+            publishMcp(project, refusedMcpTarget(), false);
+            return;
+        }
+        publishMcp(project, mcpSetup.setup(project), false);
     }
 
     private Path requireProject() throws AgentStartupException {
@@ -466,6 +570,7 @@ public final class MainView {
         cancel.setDisable(!busy);
         newSession.setDisable(busy);
         browse.setDisable(busy);
+        setupMcp.setDisable(busy);
         agentCombo.setDisable(busy);
         commandField.setDisable(busy);
         projectField.setDisable(busy);

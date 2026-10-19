@@ -33,7 +33,7 @@ mvn test
 mvn javafx:run
 ```
 
-1. Choose a project directory with **Browse**, or type a path and leave the field. Browse and starting a session copy the skills bundle into that directory. Leaving the field copies it only when the directory contains a `.uproject`. The copy never targets your home directory or its `.claude` and `.agents` folders, and it runs once per directory. Files land in `.agents/skills/` (Codex, Cursor, Gemini CLI) and `.claude/skills/` (Claude Code), plus `AGENTS.md` and a `CLAUDE.md` that imports it. Files you have edited are left alone. A `.agents` or `.claude` symlink that points outside the project is refused.
+1. Choose a project directory with **Browse**, or type a path and leave the field. Browse and starting a session copy the skills bundle into that directory. Leaving the field copies it only when the directory contains a `.uproject`. The copy never targets your home directory or its `.claude` and `.agents` folders, and it runs once per directory. Files land in `.agents/skills/` (Codex, Cursor, Gemini CLI) and `.claude/skills/` (Claude Code), plus `AGENTS.md` and a `CLAUDE.md` that imports it. Files you have edited are left alone. A `.agents` or `.claude` symlink that points outside the project is refused. When the folder contains a `.uproject`, the app also enables the Unreal MCP plugins, turns on auto-start, and writes `.mcp.json`. **Setup Unreal MCP** runs that step again. A folder with no `.uproject`, or a machine without Unreal Engine 5.8 or newer, gets a status line that says what to do next.
 2. Pick an agent. **Claude** and **Codex** fill the command field with their ACP adapters. **Custom** is any command you type. The command is split on words, not run through a shell. The program is resolved to an absolute path before the project becomes the working directory, so a file in the project cannot shadow `npx` or another command.
 3. Click **New session**, or type a prompt and press **Send** (Ctrl+Enter). The first send opens the session.
 4. The output pane streams assistant text, thoughts, tool calls, plans, and status. **Cancel** sends `session/cancel`. **Clear** wipes the pane and leaves the session running. **New session** starts a fresh agent process.
@@ -74,6 +74,7 @@ src/main/java/com/unrealinterface/UnrealInterfaceApp.java   JavaFX entry point
 src/main/java/com/unrealinterface/ui/MainView.java          Window
 src/main/java/com/unrealinterface/acp/AgentSession.java     ACP session
 src/main/java/com/unrealinterface/skills/SkillsInstaller.java
+src/main/java/com/unrealinterface/unreal/UnrealMcpSetup.java   Unreal MCP project setup
 src/main/resources/skills-bundle/                           Skills and AGENTS.md copied into projects
 src/test/resources/fake_agent.py                            Local ACP peer used by tests
 ```
