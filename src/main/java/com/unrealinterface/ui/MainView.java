@@ -40,6 +40,8 @@ import javafx.scene.control.Label;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.control.Tooltip;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.BorderPane;
@@ -70,6 +72,7 @@ public final class MainView {
     private final SkillsInstaller skillsInstaller = new SkillsInstaller();
     private final SkillInstallPolicy skillInstalls = new SkillInstallPolicy();
     private final UnrealMcpSetup mcpSetup = new UnrealMcpSetup();
+    private final WelcomeState welcomeState = new WelcomeState();
     private final AgentSession session;
     private final TextField projectField = new TextField();
     private final TextField commandField = new TextField();
@@ -83,6 +86,8 @@ public final class MainView {
     private final Button browse = new Button("Browse");
     private final Button setupMcp = new Button("Setup Unreal MCP");
     private final Button clear = new Button("Clear");
+    private final Button openFromWelcome = new Button("Open project folder");
+    private VBox welcomePane;
     private final Label mcpStatus = new Label(
             "Unreal MCP: select a folder with a .uproject. A new project needs Unreal Editor 5.8 or newer.");
     private boolean busy;
@@ -124,8 +129,16 @@ public final class MainView {
             stage.getScene().getStylesheets().add(stylesheet.toExternalForm());
         }
         stage.setOnCloseRequest(event -> shutdown());
+        Path recent = welcomeState.recentProject();
+        if (recent != null) {
+            projectField.setText(recent.toString());
+        }
+        setWelcomeVisible(welcomeState.shouldShow());
         stage.show();
         showStatus("Choose a project directory. A folder with a .uproject is configured for Unreal MCP automatically. Ctrl+Enter sends.");
+        if (recent != null) {
+            requestInstall(SkillInstallPolicy.Trigger.AUTO);
+        }
     }
 
     public void shutdown() {
@@ -232,7 +245,8 @@ public final class MainView {
 
         HBox actions = new HBox(8, newSession, clear, approveBox, sessionStatus);
         actions.setAlignment(Pos.CENTER_LEFT);
-        VBox top = new VBox(8, form, mcpStatus, actions);
+        welcomePane = buildWelcome();
+        VBox top = new VBox(8, welcomePane, form, mcpStatus, actions);
 
         HBox promptBar = new HBox(8, send, cancel);
         promptBar.setAlignment(Pos.CENTER_RIGHT);
@@ -242,8 +256,61 @@ public final class MainView {
         root.setPadding(new Insets(12));
         BorderPane.setMargin(output, new Insets(10, 0, 10, 0));
         mcpStatus.maxWidthProperty().bind(root.widthProperty().subtract(24));
+        welcomePane.maxWidthProperty().bind(root.widthProperty().subtract(24));
         refreshSend();
         return root;
+    }
+
+    private VBox buildWelcome() {
+        Label title = new Label("Welcome to UnrealInterface");
+        title.getStyleClass().add("welcome-title");
+        Label summary = new Label(WelcomeState.SUMMARY);
+        summary.setWrapText(true);
+        Label create = new Label(WelcomeState.NEW_PROJECT);
+        create.setWrapText(true);
+        openFromWelcome.setOnAction(event -> chooseProject());
+        openFromWelcome.setMinWidth(Region.USE_PREF_SIZE);
+
+        VBox examples = new VBox(6);
+        Label examplesTitle = new Label("Example prompts");
+        examples.getChildren().add(examplesTitle);
+        for (String example : WelcomeState.EXAMPLE_PROMPTS) {
+            examples.getChildren().add(exampleRow(example));
+        }
+
+        VBox box = new VBox(8, title, summary, openFromWelcome, create, examples);
+        box.getStyleClass().add("welcome");
+        box.setFillWidth(true);
+        box.setVisible(false);
+        box.setManaged(false);
+        return box;
+    }
+
+    private HBox exampleRow(String example) {
+        Label text = new Label(example);
+        text.setWrapText(true);
+        text.setMaxWidth(Double.MAX_VALUE);
+        Button copy = new Button("Copy");
+        copy.setMinWidth(Region.USE_PREF_SIZE);
+        copy.setTooltip(new Tooltip("Copy this prompt"));
+        copy.setOnAction(event -> {
+            ClipboardContent content = new ClipboardContent();
+            content.putString(example);
+            Clipboard.getSystemClipboard().setContent(content);
+            showStatus("Copied an example prompt");
+        });
+        HBox row = new HBox(8, text, copy);
+        row.setAlignment(Pos.CENTER_LEFT);
+        HBox.setHgrow(text, Priority.ALWAYS);
+        return row;
+    }
+
+    private void setWelcomeVisible(boolean visible) {
+        if (welcomePane == null) {
+            return;
+        }
+        welcomePane.setVisible(visible);
+        welcomePane.setManaged(visible);
     }
 
     private void applyPreset(String preset) {
@@ -358,6 +425,14 @@ public final class MainView {
         if (explicit || !result.message().equals(lastMcpMessage)) {
             lastMcpMessage = result.message();
             showStatus(result.message());
+        }
+        if (project != null && WelcomeState.hidesWelcome(result.status())) {
+            try {
+                welcomeState.complete(project);
+                setWelcomeVisible(false);
+            } catch (IOException ex) {
+                showStatus("Could not save the welcome state: " + ex.getMessage());
+            }
         }
     }
 
@@ -570,6 +645,7 @@ public final class MainView {
         cancel.setDisable(!busy);
         newSession.setDisable(busy);
         browse.setDisable(busy);
+        openFromWelcome.setDisable(busy);
         setupMcp.setDisable(busy);
         agentCombo.setDisable(busy);
         commandField.setDisable(busy);

@@ -32,3 +32,16 @@
 .status-bad {
     -fx-text-fill: #8f2d2d;
 }
+
+.welcome {
+    -fx-background-color: #f4f1ea;
+    -fx-background-radius: 6;
+    -fx-border-color: #d7d0c4;
+    -fx-border-radius: 6;
+    -fx-padding: 12;
+}
+
+.welcome-title {
+    -fx-font-size: 16px;
+    -fx-font-weight: bold;
+}

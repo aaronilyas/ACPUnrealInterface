@@ -33,12 +33,30 @@ mvn test
 mvn javafx:run
 ```
 
+On a first launch, and whenever no recent project is stored, a welcome pane sits above the project fields. It is not a dialog. Browse, the agent command, and Send stay usable. After setup finishes for a folder that contains one `.uproject`, later launches fill the project field from the saved path and leave the pane hidden. See [First launch](#first-launch).
+
 1. Choose a project directory with **Browse**, or type a path and leave the field. Browse and starting a session copy the skills bundle into that directory. Leaving the field copies it only when the directory contains a `.uproject`. The copy never targets your home directory or its `.claude` and `.agents` folders, and it runs once per directory. Files land in `.agents/skills/` (Codex, Cursor, Gemini CLI) and `.claude/skills/` (Claude Code), plus `AGENTS.md` and a `CLAUDE.md` that imports it. Files you have edited are left alone. A `.agents` or `.claude` symlink that points outside the project is refused. When the folder contains a `.uproject`, the app also enables the Unreal MCP plugins, turns on auto-start, and writes `.mcp.json`. **Setup Unreal MCP** runs that step again. A folder with no `.uproject`, or a machine without Unreal Engine 5.8 or newer, gets a status line that says what to do next.
 2. Pick an agent. **Claude** and **Codex** fill the command field with their ACP adapters. **Custom** is any command you type. The command is split on words, not run through a shell. The program is resolved to an absolute path before the project becomes the working directory, so a file in the project cannot shadow `npx` or another command.
 3. Click **New session**, or type a prompt and press **Send** (Ctrl+Enter). The first send opens the session.
 4. The output pane streams assistant text, thoughts, tool calls, plans, and status. **Cancel** sends `session/cancel`. **Clear** wipes the pane and leaves the session running. **New session** starts a fresh agent process.
 
 Permission requests open a dialog. **Auto-approve permissions** is off. Turn it on to select the agent's allow-once option when it offers one. An allow-always option is never selected automatically.
+
+## First launch
+
+The welcome pane explains that UnrealInterface is an ACP client that installs Unreal skills and auto-configures Unreal MCP. **Open project folder** uses the same directory chooser as **Browse**. A new game is created in Unreal Editor 5.8 or newer with File > New Project. Open the folder that contains the new `.uproject` here. The pane also has two example prompts, each with **Copy**.
+
+The pane is hidden when setup finishes for that folder: the project is configured, it was already ready, or the engine or MCP plugin is missing. The status line still says what to do next. A folder with no `.uproject`, several `.uproject` files, an engine older than 5.8, or a failed setup leaves the pane in place.
+
+The choice is stored so the pane does not return on every launch:
+
+| Host | File |
+| --- | --- |
+| Linux | `~/.config/unreal-interface/state.properties` (`$XDG_CONFIG_HOME/unreal-interface/` when that variable is set) |
+| macOS | `~/Library/Application Support/unreal-interface/state.properties` |
+| Windows | `%APPDATA%\unreal-interface\state.properties` |
+
+`welcomeSeen=true` and `recentProject` are written together. If the saved directory is gone, the pane is shown again.
 
 ### Agent commands
 
@@ -72,6 +90,7 @@ Terminal sessions stay inside the agent. UnrealInterface does not run commands f
 ```
 src/main/java/com/unrealinterface/UnrealInterfaceApp.java   JavaFX entry point
 src/main/java/com/unrealinterface/ui/MainView.java          Window
+src/main/java/com/unrealinterface/ui/WelcomeState.java      First-launch pane and recent project
 src/main/java/com/unrealinterface/acp/AgentSession.java     ACP session
 src/main/java/com/unrealinterface/skills/SkillsInstaller.java
 src/main/java/com/unrealinterface/unreal/UnrealMcpSetup.java   Unreal MCP project setup
