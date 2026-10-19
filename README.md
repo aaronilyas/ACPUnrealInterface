@@ -68,6 +68,40 @@ The choice is stored so the pane does not return on every launch:
 
 `claude` and `codex` themselves are not ACP servers. Point the command at an adapter or at a CLI that has an ACP mode. The agent inherits the environment of UnrealInterface, including API keys and `PATH`.
 
+## Packaging
+
+`mvn javafx:run` and `mvn test` are unchanged. To build an app image that does not need Maven at runtime:
+
+```bash
+./scripts/package.sh
+```
+
+That runs `mvn -B -Pjpackage package`, then `jpackage`. The image is `target/dist/UnrealInterface`. Start `target/dist/UnrealInterface/bin/UnrealInterface` on Linux and Windows, or open `target/dist/UnrealInterface.app` on macOS. The script replaces `target/jpackage` and `target/dist` each time.
+
+The skills bundle is inside the application jar (`skills-bundle/` on the classpath). The installer reads it from there, the same way `mvn javafx:run` does. The Claude and Codex presets are still `npx -y @agentclientprotocol/claude-agent-acp` and `npx -y @agentclientprotocol/codex-acp`. The packaged app resolves `npx` from `PATH`, so those presets need Node.js. A custom command is resolved the same way.
+
+`app-image` needs a JDK 17 or newer that provides `jpackage`. Set `JPACKAGE_TYPE` to `deb`, `rpm`, `dmg`, `pkg`, `exe`, or `msi` for an installer. Those types need the usual platform tools (`dpkg-deb`, `rpmbuild`, or WiX). Extra arguments are passed to Maven, for example `./scripts/package.sh -DskipTests`.
+
+The `jpackage` command is:
+
+```bash
+jpackage \
+  --type app-image \
+  --dest target/dist \
+  --name UnrealInterface \
+  --app-version 1.0.0 \
+  --vendor UnrealInterface \
+  --description "ACP client that installs Unreal skills and configures Unreal MCP" \
+  --input target/jpackage/input \
+  --main-jar unreal-interface-1.0.0.jar \
+  --main-class com.unrealinterface.UnrealInterfaceApp \
+  --module-path target/jpackage/javafx-mods \
+  --add-modules javafx.controls \
+  --java-options -Dfile.encoding=UTF-8
+```
+
+`mvn -Pjpackage package` only fills `target/jpackage/input` (the app jar and the runtime jars, without JavaFX) and `target/jpackage/javafx-all` (every JavaFX jar). The script keeps the host classifier (`linux`, `linux-aarch64`, `mac`, `mac-aarch64`, or `win`) in `target/jpackage/javafx-mods`. Those platform jars are the JavaFX modules. The empty JavaFX jars stay out of the module path.
+
 ## What the client implements
 
 - `initialize` with the client name `unreal-interface` and file read/write capability
@@ -96,6 +130,7 @@ src/main/java/com/unrealinterface/skills/SkillsInstaller.java
 src/main/java/com/unrealinterface/unreal/UnrealMcpSetup.java   Unreal MCP project setup
 src/main/resources/skills-bundle/                           Skills and AGENTS.md copied into projects
 src/test/resources/fake_agent.py                            Local ACP peer used by tests
+scripts/package.sh                                          jpackage app image
 ```
 
 ## License
