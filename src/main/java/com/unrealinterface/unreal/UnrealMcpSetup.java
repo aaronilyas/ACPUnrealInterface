@@ -426,11 +426,7 @@ public final class UnrealMcpSetup {
             return new EngineFinding(EngineState.TOO_OLD, root, requested.label());
         }
         if (association == null || association.isBlank()) {
-            Path root = walkParents(project);
-            if (root == null) {
-                return missing(any, null);
-            }
-            return judge(root);
+            return findBlankAssociation(project, any);
         }
         if (requested != null) {
             Path root = matchVersion(existing, requested);
@@ -443,12 +439,7 @@ public final class UnrealMcpSetup {
                 }
             }
             if (root == null) {
-                List<Path> unregistered = locatedUnregisteredRoots();
-                Path discovered = selectUnregistered(unregistered, requested);
-                if (discovered != null) {
-                    return judge(discovered, true);
-                }
-                return missing(any || hasSupportedUnregistered(unregistered), requested);
+                return discoverUnregistered(any, requested);
             }
             return judge(root);
         }
@@ -484,7 +475,36 @@ public final class UnrealMcpSetup {
         return new EngineFinding(EngineState.OK, root, label, discovered);
     }
 
-    /** Highest 5.8+ root whose major and minor match. The override wins when it matches. */
+    /**
+     * Blank or missing association. The override wins when it is 5.8 or newer, then a parent
+     * engine of any version, then the highest unregistered engine that is 5.8 or newer.
+     * An older parent stops the search. Directory listing runs only after those two miss.
+     */
+    private EngineFinding findBlankAssociation(Path project, boolean anyRegistered) {
+        Path override = resolveOverride(readOverride());
+        if (accepts(override, null)) {
+            return judge(override, true);
+        }
+        Path parent = walkParents(project);
+        if (parent != null) {
+            return judge(parent);
+        }
+        return discoverUnregistered(anyRegistered, null);
+    }
+
+    private EngineFinding discoverUnregistered(boolean anyRegistered, Version requested) {
+        List<Path> unregistered = locatedUnregisteredRoots();
+        Path discovered = selectUnregistered(unregistered, requested);
+        if (discovered != null) {
+            return judge(discovered, true);
+        }
+        return missing(anyRegistered || hasSupportedUnregistered(unregistered), requested);
+    }
+
+    /**
+     * Highest 5.8+ root. A version must match major and minor. A null version accepts any
+     * 5.8 or newer engine. The override wins when it matches, ahead of the directory search.
+     */
     private Path selectUnregistered(List<Path> roots, Version requested) {
         Path override = resolveOverride(readOverride());
         if (override != null && accepts(override, requested)) {

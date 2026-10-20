@@ -845,6 +845,181 @@ class UnrealMcpSetupTest {
         assertEquals("Epic Games", windows.getFileName().toString());
     }
 
+    @Test
+    void blankAssociationUsesAnUnregisteredEngine() throws Exception {
+        Path home = temp.resolve("home");
+        Path engine = engine(home.resolve("Downloads/Linux_Unreal_Engine_5.8.3"), 5, 8, 3, true);
+        String versionBefore = Files.readString(engine.resolve("Engine/Build/Build.version"));
+        Path project = temp.resolve("game");
+        Files.createDirectories(project);
+        writeUproject(project, "");
+
+        UnrealMcpSetup mcp = setupSearching(List.of(), home, null);
+        Result first = mcp.setup(project);
+        String found = engine.toAbsolutePath().normalize().toString();
+        assertEquals(Status.CONFIGURED, first.status());
+        assertTrue(first.changed());
+        assertTrue(first.message().contains("using the Unreal Engine at " + found));
+        assertTrue(first.message().contains("has not been opened"));
+        assertEquals(URL, JsonTexts.MAPPER.readTree(project.resolve(".mcp.json").toFile())
+                .at("/mcpServers/unreal-mcp/url").asText());
+        assertEquals(versionBefore, Files.readString(engine.resolve("Engine/Build/Build.version")));
+        assertFalse(Files.exists(engine.resolve(".mcp.json")));
+        assertFalse(Files.exists(engine.resolve("Saved")));
+
+        Result second = mcp.setup(project);
+        assertEquals(Status.READY, second.status());
+        assertFalse(second.changed());
+        assertTrue(second.message().contains("using the Unreal Engine at " + found));
+    }
+
+    @Test
+    void missingAssociationUsesAnUnregisteredEngine() throws Exception {
+        Path home = temp.resolve("home");
+        Path engine = engine(home.resolve("UnrealEngine"), 5, 8, 1, true);
+        Path project = temp.resolve("game");
+        Files.createDirectories(project);
+        Files.writeString(project.resolve("Game.uproject"), """
+                {
+                  "FileVersion": 3
+                }
+                """);
+        Result result = setupSearching(List.of(), home, null).setup(project);
+        assertEquals(Status.CONFIGURED, result.status());
+        assertTrue(result.message().contains("using the Unreal Engine at " + engine.toAbsolutePath().normalize()));
+        assertFalse(Files.exists(engine.resolve(".mcp.json")));
+    }
+
+    @Test
+    void blankAssociationWithoutAMatchingEngineStaysMissing() throws Exception {
+        Path home = temp.resolve("home");
+        engine(home.resolve("Downloads/Linux_Unreal_Engine_5.4.0"), 5, 4, 0, true);
+        engine(home.resolve("Downloads/CustomBuild"), 5, 8, 3, true);
+        Files.createDirectories(home.resolve("Documents"));
+        Path project = temp.resolve("game");
+        Files.createDirectories(project);
+        writeUproject(project, "");
+        Result result = setupSearching(List.of(), home, null).setup(project);
+        assertEquals(Status.ENGINE_MISSING, result.status());
+        assertTrue(result.message().contains("not installed"));
+        assertFalse(result.message().contains("using the Unreal Engine"));
+        assertFalse(result.message().contains("CustomBuild"));
+    }
+
+    @Test
+    void blankAssociationPicksTheHighestEngineAtLeast58() throws Exception {
+        Path home = temp.resolve("home");
+        engine(home.resolve("Downloads/Linux_Unreal_Engine_5.4.0"), 5, 4, 0, true);
+        engine(home.resolve("Downloads/Linux_Unreal_Engine_5.8.3"), 5, 8, 3, true);
+        Path withPlugin = engine(home.resolve("Downloads/UE_5.9"), 5, 9, 0, true);
+        Path higher = engine(home.resolve("UnrealEngine-5.10.0"), 5, 10, 0, false);
+        engine(home.resolve("Downloads/CustomBuild"), 5, 11, 0, true);
+        Path project = temp.resolve("game");
+        Files.createDirectories(project);
+        writeUproject(project, "");
+        Result result = setupSearching(List.of(), home, null).setup(project);
+        String found = higher.toAbsolutePath().normalize().toString();
+        assertEquals(Status.PLUGIN_MISSING, result.status());
+        assertTrue(result.message().contains(found));
+        assertFalse(result.message().contains(withPlugin.toAbsolutePath().normalize().toString()));
+        assertFalse(result.message().contains("CustomBuild"));
+        assertFalse(Files.isDirectory(higher.resolve("Engine/Plugins/Experimental/ModelContextProtocol")));
+    }
+
+    @Test
+    void blankAssociationPrefersThePluginWhenVersionsTie() throws Exception {
+        Path home = temp.resolve("home");
+        Path plain = engine(home.resolve("Downloads/Linux_Unreal_Engine_5.9.0"), 5, 9, 0, false);
+        Path withPlugin = engine(home.resolve("Downloads/UE_5.9"), 5, 9, 0, true);
+        Path project = temp.resolve("game");
+        Files.createDirectories(project);
+        writeUproject(project, "");
+        Result result = setupSearching(List.of(), home, null).setup(project);
+        assertEquals(Status.CONFIGURED, result.status());
+        assertTrue(result.message().contains(withPlugin.toAbsolutePath().normalize().toString()));
+        assertFalse(result.message().contains(plain.toAbsolutePath().normalize().toString()));
+    }
+
+    @Test
+    void blankAssociationOverrideBeatsAHigherDownload() throws Exception {
+        Path home = temp.resolve("home");
+        Path download = engine(home.resolve("Downloads/Linux_Unreal_Engine_5.8.3"), 5, 8, 3, true);
+        Path override = engine(temp.resolve("override"), 5, 8, 2, true);
+        Path project = temp.resolve("game");
+        Files.createDirectories(project);
+        writeUproject(project, "");
+        Result result = setupSearching(List.of(), home, override.toString()).setup(project);
+        assertEquals(Status.CONFIGURED, result.status());
+        assertTrue(result.message().contains("using the Unreal Engine at " + override.toAbsolutePath().normalize()));
+        assertFalse(result.message().contains(download.toAbsolutePath().normalize().toString()));
+        assertFalse(Files.exists(override.resolve(".mcp.json")));
+    }
+
+    @Test
+    void blankAssociationOverrideBeatsAParentEngine() throws Exception {
+        Path root = temp.resolve("source");
+        engine(root, 5, 8, 0, true);
+        Path home = temp.resolve("home");
+        engine(home.resolve("Downloads/Linux_Unreal_Engine_5.9.0"), 5, 9, 0, true);
+        Path override = engine(temp.resolve("override"), 5, 8, 1, true);
+        Path project = root.resolve("Samples").resolve("Game");
+        Files.createDirectories(project);
+        writeUproject(project, "");
+        Result result = setupSearching(List.of(), home, override.toString()).setup(project);
+        assertEquals(Status.CONFIGURED, result.status());
+        assertTrue(result.message().contains("using the Unreal Engine at " + override.toAbsolutePath().normalize()));
+        assertFalse(result.message().contains(root.toAbsolutePath().normalize().toString()));
+    }
+
+    @Test
+    void blankAssociationParentWinsOverADownloadWhenOverrideMisses() throws Exception {
+        Path root = temp.resolve("source");
+        engine(root, 5, 8, 0, true);
+        Path home = temp.resolve("home");
+        Path download = engine(home.resolve("Downloads/Linux_Unreal_Engine_5.9.0"), 5, 9, 0, true);
+        Path stale = engine(temp.resolve("stale"), 5, 4, 0, true);
+        Path project = root.resolve("Samples").resolve("Game");
+        Files.createDirectories(project);
+        writeUproject(project, "");
+        Result result = setupSearching(List.of(), home, stale.toString()).setup(project);
+        assertEquals(Status.CONFIGURED, result.status());
+        assertFalse(result.message().contains("using the Unreal Engine"));
+        assertFalse(result.message().contains(download.toAbsolutePath().normalize().toString()));
+        assertFalse(result.message().contains(stale.toAbsolutePath().normalize().toString()));
+    }
+
+    @Test
+    void blankAssociationOldParentDoesNotFallThroughToADownload() throws Exception {
+        Path root = temp.resolve("source");
+        engine(root, 5, 4, 0, true);
+        Path home = temp.resolve("home");
+        Path download = engine(home.resolve("Downloads/Linux_Unreal_Engine_5.8.3"), 5, 8, 3, true);
+        Path project = root.resolve("Samples").resolve("Game");
+        Files.createDirectories(project);
+        String original = uprojectJson("");
+        Files.writeString(project.resolve("Game.uproject"), original);
+        Result result = setupSearching(List.of(), home, null).setup(project);
+        assertEquals(Status.ENGINE_TOO_OLD, result.status());
+        assertFalse(result.changed());
+        assertEquals(original, Files.readString(project.resolve("Game.uproject")));
+        assertFalse(Files.exists(project.resolve(".mcp.json")));
+        assertFalse(result.message().contains(download.toAbsolutePath().normalize().toString()));
+    }
+
+    @Test
+    void blankAssociationStaleOverrideFallsThroughToTheHighestDownload() throws Exception {
+        Path home = temp.resolve("home");
+        Path download = engine(home.resolve("Downloads/UE_5.8"), 5, 8, 3, true);
+        Path stale = engine(temp.resolve("stale"), 5, 4, 0, true);
+        Path project = temp.resolve("game");
+        Files.createDirectories(project);
+        writeUproject(project, "");
+        Result result = setupSearching(List.of(), home, stale.toString()).setup(project);
+        assertEquals(Status.CONFIGURED, result.status());
+        assertTrue(result.message().contains(download.toAbsolutePath().normalize().toString()));
+        assertFalse(result.message().contains(stale.toAbsolutePath().normalize().toString()));
+    }
+
     private UnrealMcpSetup setup(List<EngineInstallations.Install> installs) {
         return new UnrealMcpSetup(() -> installs, HostOs.LINUX);
     }

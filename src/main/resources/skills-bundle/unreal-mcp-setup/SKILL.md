@@ -33,11 +33,21 @@ An engine root contains `Engine/Build/Build.version`. The MCP plugin directory i
 
 Resolve the engine in this order. Stop when a path association or a GUID does not resolve. Do not use a different major or minor, and do not modify the engine tree.
 
+Version association (`5.8`, `5.8.2`):
+
 1. A path association, relative to the project, or `Engine` itself when the path ends there.
-2. A registered install. Match a version on `Build.version`, or a `UE_<major>.<minor>` folder or key. Match a GUID or other key in the registration table, compared without braces.
-3. A parent directory that is an engine root. A blank association stops here. A version association uses the parent only when its major and minor match.
-4. When a version association is still unresolved, `UNREAL_ENGINE_ROOT` or the `unreal.engine.root` system property. The property wins when both are set. The value is an absolute engine root, or that root's `Engine` directory. `~` is the home directory.
-5. When that version is still unresolved, one directory level under the locations below. The directory name must start with `Linux_Unreal_Engine`, `UnrealEngine`, or `UE_`.
+2. A registered install. Match a version on `Build.version`, or a `UE_<major>.<minor>` folder or key.
+3. A parent directory that is an engine root with the same major and minor.
+4. `UNREAL_ENGINE_ROOT` or the `unreal.engine.root` system property, when the major and minor match. The property wins when both are set. The value is an absolute engine root, or that root's `Engine` directory. `~` is the home directory.
+5. One directory level under the locations below, with the same major and minor.
+
+A GUID or any other key that is not a version uses the registration table only, compared without braces. If that key does not match, stop.
+
+Blank or missing `EngineAssociation` (no version to match):
+
+1. `UNREAL_ENGINE_ROOT` or `unreal.engine.root`, when that engine is 5.8 or newer. Same path rules as above.
+2. A parent directory that is an engine root. Any version counts. Older than 5.8 stops here and does not continue to the search.
+3. One directory level under the locations below. Use the highest engine that is 5.8 or newer.
 
 | Host | Directories |
 | --- | --- |
@@ -46,7 +56,7 @@ Resolve the engine in this order. Stop when a path association or a GUID does no
 | macOS | `/Users/Shared/Epic Games` |
 | Windows | `%ProgramFiles%\Epic Games` |
 
-A candidate counts only when it contains `Engine/Build/Build.version` and that version is 5.8 or newer. A version association also requires the same major and minor. Several directory matches: use the highest version. Setup then treats that root the same as a path association and names the path in the status.
+A candidate counts only when it contains `Engine/Build/Build.version` and that version is 5.8 or newer. The directory name must start with `Linux_Unreal_Engine`, `UnrealEngine`, or `UE_`. A version association also requires the same major and minor, so a higher minor is not a match. A blank or missing association has no version to compare: rank candidates by `MajorVersion`, then `MinorVersion`, then `PatchVersion` as integers (`5.10` is newer than `5.9`) and use the highest that is 5.8 or newer. The same three numbers prefer the tree that contains the MCP plugin. The listing is one directory level. Setup treats an override or a searched root the same as a path association and names that path in the status. It does not write inside the engine tree.
 
 Write the project files unless the resolved engine, or an explicit association version, is older than 5.8. Then say which case applies:
 
