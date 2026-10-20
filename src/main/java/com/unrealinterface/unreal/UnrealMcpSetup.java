@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -41,14 +42,26 @@ public final class UnrealMcpSetup {
 
     private final EngineInstallations.Source engines;
     private final HostOs os;
+    private final List<Path> unregisteredRoots;
+    private final Supplier<String> engineRootOverride;
 
     public UnrealMcpSetup() {
-        this(EngineInstallations.system(), HostOs.current());
+        this(EngineInstallations.system(), HostOs.current(),
+                EngineInstallations.defaultUnregisteredRoots(
+                        Path.of(System.getProperty("user.home", ".")), HostOs.current()),
+                EngineInstallations::configuredEngineRoot);
     }
 
     UnrealMcpSetup(EngineInstallations.Source engines, HostOs os) {
+        this(engines, os, List.of(), () -> null);
+    }
+
+    UnrealMcpSetup(EngineInstallations.Source engines, HostOs os, List<Path> unregisteredRoots,
+            Supplier<String> engineRootOverride) {
         this.engines = engines == null ? () -> List.of() : engines;
         this.os = os == null ? HostOs.current() : os;
+        this.unregisteredRoots = unregisteredRoots == null ? List.of() : List.copyOf(unregisteredRoots);
+        this.engineRootOverride = engineRootOverride == null ? () -> null : engineRootOverride;
     }
 
     public Result setup(Path projectDirectory) {
@@ -238,6 +251,15 @@ public final class UnrealMcpSetup {
                 anySupported = true;
             }
         }
+        if (!anySupported) {
+            for (Path root : locatedUnregisteredRoots()) {
+                any = true;
+                EngineVersion version = readVersion(root);
+                if (hasPlugin(root) || (version != null && !version.olderThanMcp())) {
+                    anySupported = true;
+                }
+            }
+        }
         String message;
         if (!any) {
             message = "This folder has no .uproject, so Unreal MCP was not set up. Install Unreal Engine 5.8 or newer "
@@ -286,8 +308,8 @@ public final class UnrealMcpSetup {
             case ENGINE_MISSING -> engine.state == EngineState.NOT_INSTALLED
                     ? notInstalled(projectFile, engine, url, changed)
                     : unresolved(projectFile, engine, url, changed);
-            case CONFIGURED -> configured(projectFile, neverOpened, url, codexCustom, iniRelative);
-            case READY -> ready(projectFile, url, codexCustom);
+            case CONFIGURED -> configured(projectFile, neverOpened, url, codexCustom, iniRelative, engine);
+            case READY -> ready(projectFile, url, codexCustom, engine);
             case NO_PROJECT, AMBIGUOUS_PROJECT, FAILED -> "";
         };
         if (status == Status.ENGINE_MISSING || status == Status.PLUGIN_MISSING) {
@@ -315,22 +337,32 @@ public final class UnrealMcpSetup {
     }
 
     private static String configured(String projectFile, boolean neverOpened, String url, boolean codexCustom,
-            String iniRelative) {
+            String iniRelative, EngineFinding engine) {
         String clients = clientSentence(url, codexCustom);
+        String where = usingEngine(engine);
         if (neverOpened) {
-            return "Unreal MCP is set up for " + projectFile
+            return "Unreal MCP is set up for " + projectFile + where
                     + ". This project has not been opened in the editor yet. Launch " + projectFile
                     + " in Unreal Editor 5.8 or newer. ModelContextProtocol and AllToolsets are enabled, bAutoStartServer is True in "
                     + iniRelative + ", and " + clients + ".";
         }
-        return "Unreal MCP is set up for " + projectFile
+        return "Unreal MCP is set up for " + projectFile + where
                 + ". ModelContextProtocol and AllToolsets are enabled, bAutoStartServer is True in " + iniRelative
                 + ", and " + clients + ". Restart Unreal Editor so the server starts, then call list_toolsets.";
     }
 
-    private static String ready(String projectFile, String url, boolean codexCustom) {
-        return "Unreal MCP is already set up for " + projectFile + ". " + clientSentence(url, codexCustom)
+    private static String ready(String projectFile, String url, boolean codexCustom, EngineFinding engine) {
+        return "Unreal MCP is already set up for " + projectFile + usingEngine(engine) + ". "
+                + clientSentence(url, codexCustom)
                 + ". Restart Unreal Editor if a tool call cannot connect, then call list_toolsets. The Output Log shows the MCP listen line.";
+    }
+
+    /** Names an engine found outside the registration table. Empty for a registered or path association. */
+    private static String usingEngine(EngineFinding engine) {
+        if (engine == null || !engine.discovered() || engine.root() == null) {
+            return "";
+        }
+        return " using the Unreal Engine at " + engine.root();
     }
 
     private static String unresolved(String projectFile, EngineFinding engine, String url, boolean changed) {
@@ -411,7 +443,12 @@ public final class UnrealMcpSetup {
                 }
             }
             if (root == null) {
-                return missing(any, requested);
+                List<Path> unregistered = locatedUnregisteredRoots();
+                Path discovered = selectUnregistered(unregistered, requested);
+                if (discovered != null) {
+                    return judge(discovered, true);
+                }
+                return missing(any || hasSupportedUnregistered(unregistered), requested);
             }
             return judge(root);
         }
@@ -432,15 +469,157 @@ public final class UnrealMcpSetup {
     }
 
     private static EngineFinding judge(Path root) {
+        return judge(root, false);
+    }
+
+    private static EngineFinding judge(Path root, boolean discovered) {
         EngineVersion version = readVersion(root);
         String label = version == null ? "" : version.major + "." + version.minor;
         if (version != null && version.olderThanMcp()) {
-            return new EngineFinding(EngineState.TOO_OLD, root, label);
+            return new EngineFinding(EngineState.TOO_OLD, root, label, discovered);
         }
         if (!hasPlugin(root)) {
-            return new EngineFinding(EngineState.PLUGIN_MISSING, root, label);
+            return new EngineFinding(EngineState.PLUGIN_MISSING, root, label, discovered);
         }
-        return new EngineFinding(EngineState.OK, root, label);
+        return new EngineFinding(EngineState.OK, root, label, discovered);
+    }
+
+    /** Highest 5.8+ root whose major and minor match. The override wins when it matches. */
+    private Path selectUnregistered(List<Path> roots, Version requested) {
+        Path override = resolveOverride(readOverride());
+        if (override != null && accepts(override, requested)) {
+            return override;
+        }
+        Path best = null;
+        EngineVersion bestVersion = null;
+        for (Path root : roots) {
+            if (!accepts(root, requested)) {
+                continue;
+            }
+            EngineVersion version = readVersion(root);
+            if (version == null) {
+                continue;
+            }
+            if (betterEngine(root, version, best, bestVersion)) {
+                best = root;
+                bestVersion = version;
+            }
+        }
+        return best;
+    }
+
+    private boolean hasSupportedUnregistered(List<Path> roots) {
+        for (Path root : roots) {
+            if (accepts(root, null)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private List<Path> locatedUnregisteredRoots() {
+        List<Path> roots = new ArrayList<>();
+        addRoot(roots, resolveOverride(readOverride()));
+        for (Path candidate : EngineInstallations.unregisteredCandidates(unregisteredRoots)) {
+            addRoot(roots, asEngineRoot(candidate));
+        }
+        return roots;
+    }
+
+    private String readOverride() {
+        try {
+            return engineRootOverride.get();
+        } catch (RuntimeException ex) {
+            return null;
+        }
+    }
+
+    private static void addRoot(List<Path> roots, Path root) {
+        if (root != null && !roots.contains(root)) {
+            roots.add(root);
+        }
+    }
+
+    /** An absolute engine root from the override. A path that ends in {@code Engine} uses its parent. */
+    private static Path resolveOverride(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String text = value.trim();
+        if (text.equals("~")) {
+            text = System.getProperty("user.home", "");
+        } else if (text.startsWith("~/") || text.startsWith("~\\")) {
+            text = System.getProperty("user.home", "") + text.substring(1);
+        }
+        Path path;
+        try {
+            path = Path.of(text);
+        } catch (RuntimeException ex) {
+            return null;
+        }
+        if (!path.isAbsolute()) {
+            return null;
+        }
+        try {
+            path = path.toAbsolutePath().normalize();
+        } catch (RuntimeException ex) {
+            return null;
+        }
+        if (isEngineRoot(path)) {
+            return path;
+        }
+        if (path.getFileName() != null && "Engine".equals(path.getFileName().toString())
+                && Files.isRegularFile(path.resolve("Build").resolve("Build.version"))) {
+            Path parent = path.getParent();
+            if (parent != null && isEngineRoot(parent)) {
+                return parent.normalize();
+            }
+        }
+        return null;
+    }
+
+    private static Path asEngineRoot(Path candidate) {
+        if (candidate == null) {
+            return null;
+        }
+        try {
+            Path root = candidate.toAbsolutePath().normalize();
+            return isEngineRoot(root) ? root : null;
+        } catch (RuntimeException ex) {
+            return null;
+        }
+    }
+
+    /** {@code requested} null accepts any 5.8 or newer engine. Otherwise major and minor must match. */
+    private static boolean accepts(Path root, Version requested) {
+        if (root == null || !isEngineRoot(root)) {
+            return false;
+        }
+        EngineVersion version = readVersion(root);
+        if (version == null || version.olderThanMcp()) {
+            return false;
+        }
+        if (requested == null) {
+            return true;
+        }
+        return version.major == requested.major && version.minor == requested.minor;
+    }
+
+    private static boolean betterEngine(Path candidate, EngineVersion candidateVersion, Path current,
+            EngineVersion currentVersion) {
+        if (current == null || currentVersion == null) {
+            return true;
+        }
+        if (candidateVersion.major != currentVersion.major) {
+            return candidateVersion.major > currentVersion.major;
+        }
+        if (candidateVersion.minor != currentVersion.minor) {
+            return candidateVersion.minor > currentVersion.minor;
+        }
+        if (candidateVersion.patch != currentVersion.patch) {
+            return candidateVersion.patch > currentVersion.patch;
+        }
+        return hasPlugin(candidate) && !hasPlugin(current);
     }
 
     private static Path matchVersion(List<EngineInstallations.Install> installs, Version requested) {
@@ -586,7 +765,10 @@ public final class UnrealMcpSetup {
         OK, TOO_OLD, NOT_INSTALLED, UNRESOLVED, PLUGIN_MISSING
     }
 
-    private record EngineFinding(EngineState state, Path root, String versionLabel) {
+    private record EngineFinding(EngineState state, Path root, String versionLabel, boolean discovered) {
+        private EngineFinding(EngineState state, Path root, String versionLabel) {
+            this(state, root, versionLabel, false);
+        }
     }
 
     private record Version(int major, int minor) {

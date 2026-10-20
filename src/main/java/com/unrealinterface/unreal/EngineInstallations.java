@@ -2,6 +2,7 @@ package com.unrealinterface.unreal;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -19,8 +20,16 @@ import com.fasterxml.jackson.databind.JsonNode;
 /**
  * Finds Unreal Engine installs the way the editor's version selector does:
  * Install.ini on macOS and Linux, the launcher manifest and registry on Windows.
+ * Also lists unregistered trees, such as a zip extracted under Downloads, and
+ * reads the optional {@code UNREAL_ENGINE_ROOT} override.
  */
 final class EngineInstallations {
+
+    /** JVM system property. Wins over {@link #ROOT_ENV} when both are set. */
+    static final String ROOT_PROPERTY = "unreal.engine.root";
+
+    /** Process environment variable naming an engine root. */
+    static final String ROOT_ENV = "UNREAL_ENGINE_ROOT";
 
     record Install(Path root, String key) {
     }
@@ -67,6 +76,82 @@ final class EngineInstallations {
             return List.of();
         }
         return existingEngines(parsed);
+    }
+
+    /**
+     * Directories whose immediate children may be an unregistered engine.
+     * Listing is one level deep. Callers still require {@code Engine/Build/Build.version}.
+     */
+    static List<Path> defaultUnregisteredRoots(Path home, HostOs os) {
+        List<Path> roots = new ArrayList<>();
+        if (home != null) {
+            roots.add(home.resolve("Downloads"));
+            roots.add(home);
+        }
+        HostOs host = os == null ? HostOs.current() : os;
+        switch (host) {
+            case LINUX -> roots.add(Path.of("/opt"));
+            case MAC -> roots.add(Path.of("/Users/Shared/Epic Games"));
+            case WINDOWS -> {
+                String programFiles = System.getenv("ProgramFiles");
+                Path programs = programFiles == null || programFiles.isBlank()
+                        ? Path.of("C:\\Program Files")
+                        : Path.of(programFiles);
+                roots.add(programs.resolve("Epic Games"));
+            }
+        }
+        return List.copyOf(roots);
+    }
+
+    /**
+     * Child directories whose names look like an extracted or source engine.
+     * Prefixes: {@code Linux_Unreal_Engine*}, {@code UnrealEngine*}, {@code UE_*}.
+     */
+    static List<Path> unregisteredCandidates(List<Path> directories) {
+        if (directories == null || directories.isEmpty()) {
+            return List.of();
+        }
+        List<Path> found = new ArrayList<>();
+        for (Path directory : directories) {
+            if (directory == null || !Files.isDirectory(directory)) {
+                continue;
+            }
+            try (DirectoryStream<Path> listing = Files.newDirectoryStream(directory)) {
+                for (Path path : listing) {
+                    Path name = path.getFileName();
+                    if (name != null && matchesEngineDirectoryName(name.toString()) && Files.isDirectory(path)) {
+                        found.add(path);
+                    }
+                }
+            } catch (IOException | RuntimeException ex) {
+                // Skip a directory that cannot be listed.
+            }
+        }
+        return found;
+    }
+
+    static boolean matchesEngineDirectoryName(String name) {
+        if (name == null || name.isEmpty()) {
+            return false;
+        }
+        return startsWithIgnoreCase(name, "Linux_Unreal_Engine")
+                || startsWithIgnoreCase(name, "UnrealEngine")
+                || startsWithIgnoreCase(name, "UE_");
+    }
+
+    /** Property, then environment variable. Blank values are ignored. */
+    static String configuredEngineRoot() {
+        return configuredEngineRoot(System.getProperty(ROOT_PROPERTY), System.getenv(ROOT_ENV));
+    }
+
+    static String configuredEngineRoot(String property, String env) {
+        if (property != null && !property.isBlank()) {
+            return property.trim();
+        }
+        if (env != null && !env.isBlank()) {
+            return env.trim();
+        }
+        return null;
     }
 
     static Path installIni(Path home, HostOs os) {
@@ -202,6 +287,10 @@ final class EngineInstallations {
         } catch (RuntimeException ex) {
             return "";
         }
+    }
+
+    private static boolean startsWithIgnoreCase(String text, String prefix) {
+        return text.regionMatches(true, 0, prefix, 0, prefix.length());
     }
 
     private static String stripQuotes(String value) {

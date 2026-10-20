@@ -31,11 +31,26 @@ An engine root contains `Engine/Build/Build.version`. The MCP plugin directory i
 | macOS | `~/Library/Application Support/Epic/UnrealEngine/Install.ini`, section `[Installations]`, `key=engine root` |
 | Linux | `~/.config/Epic/UnrealEngine/Install.ini`, section `[Installations]`, `key=engine root` |
 
-Resolve the engine in this order: a path association (relative to the project, or `Engine` itself when the path ends there); a version match on `Build.version` or a `UE_<major>.<minor>` folder or key; a GUID or other key in the registration table, compared without braces; a blank association walks parents for an engine root. Do not pair a version or GUID with a different engine.
+Resolve the engine in this order. Stop when a path association or a GUID does not resolve. Do not use a different major or minor, and do not modify the engine tree.
+
+1. A path association, relative to the project, or `Engine` itself when the path ends there.
+2. A registered install. Match a version on `Build.version`, or a `UE_<major>.<minor>` folder or key. Match a GUID or other key in the registration table, compared without braces.
+3. A parent directory that is an engine root. A blank association stops here. A version association uses the parent only when its major and minor match.
+4. When a version association is still unresolved, `UNREAL_ENGINE_ROOT` or the `unreal.engine.root` system property. The property wins when both are set. The value is an absolute engine root, or that root's `Engine` directory. `~` is the home directory.
+5. When that version is still unresolved, one directory level under the locations below. The directory name must start with `Linux_Unreal_Engine`, `UnrealEngine`, or `UE_`.
+
+| Host | Directories |
+| --- | --- |
+| Linux, macOS, and Windows | `~/Downloads` and the home directory |
+| Linux | `/opt` |
+| macOS | `/Users/Shared/Epic Games` |
+| Windows | `%ProgramFiles%\Epic Games` |
+
+A candidate counts only when it contains `Engine/Build/Build.version` and that version is 5.8 or newer. A version association also requires the same major and minor. Several directory matches: use the highest version. Setup then treats that root the same as a path association and names the path in the status.
 
 Write the project files unless the resolved engine, or an explicit association version, is older than 5.8. Then say which case applies:
 
-- No engine registered, or the associated version is not on disk: Unreal Engine is not installed. Install it from the Epic Games Launcher, open the `.uproject`, and allow one editor restart. The project files are already written.
+- No matching engine in the registration table, `UNREAL_ENGINE_ROOT`, or the unregistered locations: Unreal Engine is not installed. Install it from the Epic Games Launcher, or set `UNREAL_ENGINE_ROOT` to a 5.8 or newer engine root, open the `.uproject`, and allow one editor restart. The project files are already written.
 - Some other engine is installed: right-click the `.uproject`, choose Switch Unreal Engine version, select 5.8 or newer, and restart the editor.
 - The engine root exists but `Engine/Plugins/Experimental/ModelContextProtocol` does not: install or rebuild Unreal Engine 5.8 or newer with that plugin, then restart the editor.
 - `Saved/` does not exist: the project has not been opened in the editor yet. Launch the `.uproject`. The new settings apply on that launch.
@@ -149,7 +164,7 @@ After launch, confirm the server with a live call to `list_toolsets`, not with a
 - No `.uproject`: install Unreal Engine 5.8 or newer if needed, choose File > New Project, then select that project's folder.
 - Several `.uproject` files: keep one project in the folder and run setup again.
 - Engine older than 5.8, or the plugin directory is missing: install or rebuild 5.8 or newer, choose Switch Unreal Engine version, then run setup again. Do not invent plugin entries for an older engine.
-- Engine not installed or not registered: install from the Epic Games Launcher, or add the source build to the registration file in the table above, open the `.uproject`, and allow one restart. Project files can already be in place.
+- Engine not installed or not registered: the search above already includes extracted trees and `UNREAL_ENGINE_ROOT`. If none match, install 5.8 or newer, or set `UNREAL_ENGINE_ROOT` to that engine root, open the `.uproject`, and allow one restart. Project files can already be in place.
 - `.uproject` or `.mcp.json` is not valid JSON, or `Plugins` / `mcpServers` has the wrong JSON type: leave that file unchanged, fix it, and run setup again.
 - A setup file points outside the project through a symlink: select the real project folder. Do not follow the link.
 - The editor was already open: restart it. Auto-start is read at launch.
